@@ -8,3 +8,15 @@ __pycache__/
 *.tfstate*
 .terraform/
 *.tfvars
+
+node_modules/
+.expo/
+dist/
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+mobile/android/
+mobile/ios/

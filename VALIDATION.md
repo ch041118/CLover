@@ -1,3 +1,17 @@
+# 모바일 앱 전환 검증 (2026-09-19)
+
+- 백엔드 기존 테스트: **69개 통과**. 추가한 모바일 가입 승인 권한 테스트: **1개 통과**.
+- 모바일 API 테스트: **9개 통과** (HTTPS/개발망 예외, 인증 만료, 로그아웃 중 응답 폐기, 자동 재전송 금지).
+- `npm run typecheck`: 통과.
+- `npx expo export --platform android --platform ios`: 두 플랫폼 번들 생성 성공.
+- 검증 환경: Python 3.12, Node.js 24.19, Expo SDK 57.
+- 백엔드 테스트에서 의존성 deprecation 경고 2건이 발생했으며 테스트 실패는 없습니다.
+
+실기기 설치·화면/접근성 점검, 실제 Ollama 추론, APK/IPA 서명 및 스토어 배포는 미수행입니다.
+요양보호사 일정 배정과 다기관 격리는 아직 미구현입니다.
+
+---
+
 # v3 로컬 전용 버전 검증
 
 - Python 3.12 `python -m pytest -q`: **69 passed**, 테스트 의존성 deprecation warning 2건.

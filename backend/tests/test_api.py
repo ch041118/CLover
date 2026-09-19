@@ -113,3 +113,15 @@ def test_general_drafts_authorization_and_no_free_text(api):
     assert c.post('/api/general-drafts',headers=auth(c,'elder1'),json=valid).status_code==403
     assert c.post('/api/general-drafts',headers=auth(c,'worker1'),json={**valid,'note':'private'}).status_code==422
     assert c.post('/api/general-drafts',headers=auth(c,'worker1'),json=valid).status_code==503
+
+def test_mobile_pending_approvals_require_admin_and_hide_passwords(api):
+    c, _ = api
+    body = {'id': 'mobile_new', 'password': 'synthetic-password-123', 'role': 'elder'}
+    assert c.post('/api/signup', json=body).status_code == 201
+    assert c.get('/api/admin/pending-users').status_code == 401
+    for name in ['elder1', 'worker1', 'caregiver']:
+        assert c.get('/api/admin/pending-users', headers=auth(c, name)).status_code == 403
+    rows = c.get('/api/admin/pending-users', headers=auth(c, 'admin')).json()
+    assert rows == [{'id': 'mobile_new', 'role': 'elder', 'status': 'pending'}]
+    assert c.post('/api/admin/approve/mobile_new', headers=auth(c, 'admin'), json={}).status_code == 200
+    assert c.get('/api/admin/pending-users', headers=auth(c, 'admin')).json() == []

@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "CLover 안부 케어",
+    "slug": "clover-care",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "permissions": []
+    }
+  }
+}
