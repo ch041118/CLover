@@ -39,7 +39,7 @@ export class ApiClient {
       if (this.closed) throw new ApiError(401, '다시 로그인해 주세요.');
       if (!response.ok) {
         if (response.status === 401 && hadToken) { this.close(); this.expired(); }
-        const messages: Record<number, string> = { 400: '선택 항목을 확인해 주세요.', 401: '로그인 정보를 확인해 주세요. 세션이 만료됐을 수도 있습니다.', 403: '계정 승인 또는 접근 권한을 확인해 주세요.', 404: '요청을 찾을 수 없습니다.', 409: '이미 처리됐거나 사용할 수 없는 값입니다. 목록을 새로고침해 주세요.', 422: '입력 항목을 확인하고 인증키·비밀번호를 요청 내용에서 제거해 주세요.', 503: '현재 내부 AI를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.' };
+        const messages: Record<number, string> = { 400: '선택 항목을 확인해 주세요.', 401: '로그인 정보를 확인해 주세요. 세션이 만료됐을 수도 있습니다.', 403: '계정 승인 또는 접근 권한을 확인해 주세요.', 404: '요청을 찾을 수 없습니다.', 409: '이미 처리됐거나 사용할 수 없는 값입니다. 목록을 새로고침해 주세요.', 422: '입력 형식·지역·미래 날짜를 확인해 주세요. 음성이라면 짧고 또렷하게 다시 말씀해 주세요.', 503: '기관 AI를 사용할 수 없습니다. 서버 설정·모델 설치를 확인하거나 담당자에게 문의해 주세요.' };
         throw new ApiError(response.status, messages[response.status] || '서버에서 처리하지 못했습니다.');
       }
       const result = await response.json() as T;

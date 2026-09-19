@@ -15,21 +15,24 @@ from sqlalchemy import create_engine, select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker, Session
 from .config import Settings
-from .models import Base, User, Care, Audit, Attendance
+from .models import Base, User, Care, Audit, Attendance, Preference
 from .schemas import Signup, Login, CareCreate, Review, GeneralDraft
 from .classifier import Classifier
-from .general_ai import GeneralAI, GeneralUnavailable
+from .general_ai import GeneralAI, GeneralUnavailable, template_result
+from .matching import register_matching
+from .speech import Speech, SpeechInput, SpeechUnavailable, SpeechInvalid, suggested_category
 
 passwords = PasswordHash.recommended()
 bearer = HTTPBearer(auto_error=False)
 
-def create_app(settings=None, classifier=None, general_ai=None):
+def create_app(settings=None, classifier=None, general_ai=None, speech=None):
     settings = settings or Settings()
     engine = create_engine(settings.database_url, **({'connect_args': {'check_same_thread': False}} if settings.database_url.startswith('sqlite:') else {}))
     factory = sessionmaker(engine, expire_on_commit=False)
     cipher = Fernet(settings.data_key.encode())
     classifier = classifier or Classifier(settings)
     general_ai = general_ai or GeneralAI(settings)
+    speech = speech or Speech(settings)
     dummy_hash = passwords.hash(uuid.uuid4().hex)
 
     @asynccontextmanager
@@ -40,7 +43,7 @@ def create_app(settings=None, classifier=None, general_ai=None):
         yield
         engine.dispose()
 
-    app = FastAPI(title='안부 케어 · 로컬 AI', lifespan=lifespan,
+    app = FastAPI(title='CLover 생활 돌봄', lifespan=lifespan,
                   docs_url='/docs' if settings.app_env == 'development' else None,
                   redoc_url=None, openapi_url='/openapi.json' if settings.app_env == 'development' else None)
     app.state.factory = factory
@@ -59,8 +62,16 @@ def create_app(settings=None, classifier=None, general_ai=None):
     @app.middleware('http')
     async def security_headers(request: Request, call_next):
         # Deployment proxy must also enforce size and rate limits, including chunked requests.
-        if request.headers.get('content-length', '').isdigit() and int(request.headers['content-length']) > 32768:
+        limit = 2_900_000 if request.url.path == '/api/speech/transcribe' else 32768
+        if request.headers.get('content-length', '').isdigit() and int(request.headers['content-length']) > limit:
             return JSONResponse(status_code=413, content={'detail': '요청이 너무 큽니다.'})
+        if request.method in ('POST', 'PUT', 'PATCH'):
+            chunks = bytearray()
+            async for chunk in request.stream():
+                chunks.extend(chunk)
+                if len(chunks) > limit:
+                    return JSONResponse(status_code=413, content={'detail': '요청이 너무 큽니다.'}, headers={'Cache-Control':'no-store'})
+            request._body = bytes(chunks)
         response = await call_next(request)
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
@@ -154,11 +165,13 @@ def create_app(settings=None, classifier=None, general_ai=None):
 
     @app.post('/api/care-requests', status_code=201)
     def submit(body: CareCreate, user=Depends(role('elder')), session: Session = Depends(db)):
-        result = classifier.classify(body.note, body.features, body.allow_local_ai)
+        pref = session.get(Preference, user.id)
+        consent = body.allow_local_ai if body.allow_local_ai is not None else bool(pref and pref.local_ai)
+        result = classifier.classify(body.note, body.features, consent)
         privacy = result.pop("privacy")
         if privacy["sensitivity"] == "restricted":
             raise HTTPException(422, "인증키·비밀번호를 제거하고 다시 접수하세요. 긴급 상황이면 119에 연락하세요.")
-        stored = {**body.model_dump(mode="json"), "privacy": privacy}
+        stored = {**body.model_dump(mode="json"), "allow_local_ai": consent, "privacy": privacy}
         row = Care(id=str(uuid.uuid4()), owner_id=user.id, category=body.features.category.value,
                    encrypted_content=cipher.encrypt(json.dumps(stored, ensure_ascii=False).encode()).decode(), **result)
         session.add(row)
@@ -241,7 +254,7 @@ def create_app(settings=None, classifier=None, general_ai=None):
         try:
             result = general_ai.generate(body.topic, body.allow_local_ai)
         except GeneralUnavailable:
-            raise HTTPException(503, '일반 안내문 AI를 사용할 수 없습니다.')
+            result = template_result(body.topic, 'local_disabled' if settings.llm_mode != 'local' else 'local_unavailable')
         audit(session, user, 'general_draft', body.topic.value)
         session.commit()
         return result
@@ -250,4 +263,24 @@ def create_app(settings=None, classifier=None, general_ai=None):
     def audit_list(user=Depends(role('admin')), session: Session = Depends(db)):
         return [{'actor': x.actor, 'action': x.action, 'target': x.target, 'created_at': x.created_at} for x in
                 session.scalars(select(Audit).order_by(Audit.id.desc()).limit(100))]
+    @app.get('/api/ai-status')
+    def ai_status(user=Depends(current)):
+        # Configuration readiness only; no private prompts are sent as a health check.
+        from pathlib import Path
+        return {'text_enabled':settings.llm_mode=='local',
+                'speech_enabled':settings.speech_enabled,
+                'speech_model_installed':(Path(settings.speech_model_path)/'model.bin').is_file(),
+                'text_model':settings.local_model}
+
+    @app.post('/api/speech/transcribe')
+    def transcribe(body:SpeechInput,user=Depends(role('elder')),session=Depends(db)):
+        if not body.consent: raise HTTPException(400,'음성 처리 안내를 확인하세요.')
+        try: text=speech.transcribe(body.audio_base64)
+        except SpeechInvalid: raise HTTPException(422,'음성을 다시 녹음해 주세요.')
+        except SpeechUnavailable: raise HTTPException(503,'기관 음성 모델 설정을 확인하세요.')
+        # Do not persist audio or transcription before an explicit care submission.
+        audit(session,user,'transcribe','local');session.commit()
+        return {'text':text,'category':suggested_category(text)}
+
+    register_matching(app, db, current, role, audit)
     return app

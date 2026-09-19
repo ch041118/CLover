@@ -73,7 +73,7 @@ def test_general_uses_same_local_model(topic):
         assert str(request.url)=='http://127.0.0.1:11434/api/chat'
         assert body['model']=='qwen2.5:0.5b'
         assert body['options']['num_ctx']==2048
-        assert body['options']['num_predict']==192
+        assert body['options']['num_predict']==384
         assert body['messages'][1]['content']==PROMPTS[topic]
         return httpx.Response(200,json=envelope('{"draft":"환영합니다. 함께해요."}'))
     settings=local_settings()

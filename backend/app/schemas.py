@@ -20,10 +20,16 @@ class Signal(StrEnum):
     missed_meal='missed_meal'
     missed_medication='missed_medication'
     loneliness='loneliness'
+    meal_preparation='meal_preparation'
+    walk_companion='walk_companion'
+    light_housework='light_housework'
+    shopping_help='shopping_help'
+    conversation='conversation'
+    medication_reminder='medication_reminder'
 
 class Features(StrictModel):
     category: Category
-    signals: list[Signal] = Field(default_factory=list, max_length=7)
+    signals: list[Signal] = Field(default_factory=list, max_length=13)
     duration: str = Field(default='unknown', pattern='^(today|several_days|unknown)$')
     can_self_manage: bool = False
 
@@ -41,7 +47,7 @@ class CareCreate(StrictModel):
     features: Features
     # Legacy field accepted but NEVER grants local or external care processing consent.
     allow_structured_ai: bool = False
-    allow_local_ai: bool = False
+    allow_local_ai: bool | None = None
 
     @field_validator('note')
     @classmethod

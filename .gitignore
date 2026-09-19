@@ -20,3 +20,8 @@ dist/
 *.mobileprovision
 mobile/android/
 mobile/ios/
+
+models/
+*.m4a
+*.wav
+*.mp3

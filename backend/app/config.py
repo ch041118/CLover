@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     local_model: Literal['qwen2.5:0.5b'] = 'qwen2.5:0.5b'
     local_model_url: str = 'http://127.0.0.1:11434'
     local_privacy_reviewed: bool = False
+    speech_enabled: bool = False
+    speech_model_path: str = './models/whisper-tiny'
     cors_origins: list[str] = ['http://localhost:3000']
 
     @model_validator(mode='after')

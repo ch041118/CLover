@@ -42,3 +42,38 @@ class Attendance(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
     day: Mapped[str] = mapped_column(String(10))
+
+class Preference(Base):
+    __tablename__ = 'preferences'
+    owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), primary_key=True)
+    local_ai: Mapped[bool] = mapped_column(Boolean, default=False)
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class ServiceRegion(Base):
+    __tablename__ = 'service_regions'
+    __table_args__ = (UniqueConstraint('owner_id', 'province', 'district'),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    province: Mapped[str] = mapped_column(String(30))
+    district: Mapped[str] = mapped_column(String(30))
+
+class Availability(Base):
+    __tablename__ = 'availability'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    caregiver_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    province: Mapped[str] = mapped_column(String(30))
+    district: Mapped[str] = mapped_column(String(30))
+    day: Mapped[str] = mapped_column(String(10), index=True)
+    start: Mapped[str] = mapped_column(String(5))
+    end: Mapped[str] = mapped_column(String(5))
+    state: Mapped[str] = mapped_column(String(20), default='open')
+
+class Booking(Base):
+    __tablename__ = 'bookings'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    slot_id: Mapped[str] = mapped_column(ForeignKey('availability.id'), index=True)
+    elder_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    category: Mapped[str] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(20), default='pending')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

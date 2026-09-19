@@ -112,7 +112,9 @@ def test_general_drafts_authorization_and_no_free_text(api):
     assert c.post('/api/general-drafts',json=valid).status_code==401
     assert c.post('/api/general-drafts',headers=auth(c,'elder1'),json=valid).status_code==403
     assert c.post('/api/general-drafts',headers=auth(c,'worker1'),json={**valid,'note':'private'}).status_code==422
-    assert c.post('/api/general-drafts',headers=auth(c,'worker1'),json=valid).status_code==503
+    result=c.post('/api/general-drafts',headers=auth(c,'worker1'),json=valid)
+    assert result.status_code==200
+    assert result.json()['source']=='template' and result.json()['reason']=='local_disabled'
 
 def test_mobile_pending_approvals_require_admin_and_hide_passwords(api):
     c, _ = api

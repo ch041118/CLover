@@ -1,29 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { AppState, KeyboardAvoidingView, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { AppState, KeyboardAvoidingView, Platform, Pressable, ScrollView, StatusBar, Text, View } from 'react-native';
 import { ApiClient, resolveBaseUrl } from './src/api';
 import { Care, Category, Role, User, Urgency, categories, roles, urgencies } from './src/types';
 
-const colors = { bg: '#F1F6F2', card: '#FFFFFF', green: '#176347', dark: '#153629', muted: '#526B5E', line: '#D6E2D9', danger: '#A32627' };
-function Button({ title, onPress, secondary = false, disabled = false }: { title: string; onPress: () => void; secondary?: boolean; disabled?: boolean }) {
-  return <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[s.button, secondary && s.secondary, disabled && { opacity: .45 }]}><Text style={[s.buttonText, secondary && { color: colors.green }]}>{title}</Text></Pressable>;
-}
-function Card({ children }: { children: React.ReactNode }) { return <View style={s.card}>{children}</View>; }
-function Field({ label, value, onChange, password = false, multiline = false, maxLength = 128 }: { label: string; value: string; onChange: (x: string) => void; password?: boolean; multiline?: boolean; maxLength?: number }) {
-  return <View style={{ gap: 6 }}><Text style={s.label}>{label}</Text><TextInput accessibilityLabel={label} value={value} onChangeText={onChange} secureTextEntry={password} autoCorrect={false} autoCapitalize="none" multiline={multiline} maxLength={maxLength} style={[s.input, multiline && { minHeight: 130, textAlignVertical: 'top' }]} /></View>;
-}
-function Chips<T extends string>({ options, value, select }: { options: Record<T, string>; value: T; select: (v: T) => void }) {
-  return <View style={s.wrap}>{(Object.keys(options) as T[]).map(v => <Pressable key={v} accessibilityRole="button" accessibilityState={{ selected: v === value }} onPress={() => select(v)} style={[s.chip, v === value && s.chipOn]}><Text style={[s.chipText, v === value && { color: '#fff' }]}>{options[v]}</Text></Pressable>)}</View>;
-}
-function useTask() {
-  const [busy, setBusy] = useState(false), [message, setMessage] = useState(''); const lock = useRef(false);
-  async function run(fn: () => Promise<void>) {
-    if (lock.current) return; lock.current = true; setBusy(true); setMessage('');
-    try { await fn(); } catch (error) { setMessage(error instanceof Error ? error.message : '처리에 실패했습니다.'); }
-    finally { lock.current = false; setBusy(false); }
-  }
-  return { busy, message, setMessage, run };
-}
-function Notice({ text }: { text: string }) { return text ? <Text accessibilityLiveRegion="polite" style={s.notice}>{text}</Text> : null; }
+import { Button, Card, Field, Chips, useTask, Notice, colors, s } from './src/ui';
+import { SettingsScreen, ConsentGate } from './src/components/SettingsScreen';
+import { MatchingScreen } from './src/components/MatchingScreen';
+import { VoiceRequest } from './src/components/VoiceRequest';
 
 function Auth({ api, onLogin }: { api: ApiClient; onLogin: (user: User) => void }) {
   const [signup, setSignup] = useState(false), [id, setId] = useState(''), [password, setPassword] = useState(''), [role, setRole] = useState<'elder' | 'social_worker' | 'caregiver'>('elder');
@@ -43,24 +26,25 @@ function Auth({ api, onLogin }: { api: ApiClient; onLogin: (user: User) => void 
   </Card>;
 }
 function NewRequest({ api, onDone }: { api: ApiClient; onDone: () => void }) {
-  const [category, setCategory] = useState<Category>('meal'), [note, setNote] = useState(''), [signals, setSignals] = useState<string[]>([]), [consent, setConsent] = useState(false);
+  const [category, setCategory] = useState<Category>('meal'), [note, setNote] = useState(''), [signals, setSignals] = useState<string[]>([]), [urgent, setUrgent] = useState(false), [voiceBusy, setVoiceBusy] = useState(false);
   const task = useTask();
-  const choices: Record<string, string> = { breathing_difficulty: '숨쉬기 어려움', unconscious: '의식 없음', severe_bleeding: '심한 출혈', fall: '넘어짐', missed_meal: '식사를 못함', missed_medication: '약을 못 먹음', loneliness: '외로움' };
-  return <Card><Text style={s.heading}>어떤 도움이 필요한가요?</Text><Chips options={categories} value={category} select={setCategory} />
-    <Text style={s.label}>현재 상황 (해당하는 항목 선택)</Text><View style={s.wrap}>{Object.entries(choices).map(([key, label]) => <Pressable key={key} accessibilityRole="checkbox" accessibilityState={{ checked: signals.includes(key) }} onPress={() => setSignals(signals.includes(key) ? signals.filter(x => x !== key) : [...signals, key])} style={[s.chip, signals.includes(key) && s.chipOn]}><Text style={[s.chipText, signals.includes(key) && { color: '#fff' }]}>{label}</Text></Pressable>)}</View>
+  const choices: Record<string, string> = { meal_preparation: '식사 준비', walk_companion: '산책·외출 동행', light_housework: '가벼운 집안일', shopping_help: '장보기 도움', conversation: '이야기 나누기', medication_reminder: '약 시간 챙기기', ...(urgent ? { breathing_difficulty: '숨쉬기 어려움', unconscious: '의식 없음', severe_bleeding: '심한 출혈', fall: '넘어짐', missed_meal: '식사를 못함', missed_medication: '약을 못 먹음' } : {}) };
+  return <><VoiceRequest api={api} onDone={onDone} onBusy={setVoiceBusy} /><Card><Text style={s.heading}>어떤 도움이 필요한가요?</Text><Chips options={categories} value={category} select={setCategory} />
+    <Text style={s.label}>오늘 필요한 도움 (편하게 골라 주세요)</Text><View style={s.wrap}>{Object.entries(choices).map(([key, label]) => <Pressable key={key} accessibilityRole="checkbox" accessibilityState={{ checked: signals.includes(key) }} onPress={() => setSignals(signals.includes(key) ? signals.filter(x => x !== key) : [...signals, key])} style={[s.chip, signals.includes(key) && s.chipOn]}><Text style={[s.chipText, signals.includes(key) && { color: '#fff' }]}>{label}</Text></Pressable>)}</View>
+    <Button secondary title={urgent ? "긴급 항목 접기" : "다치거나 급한 상황인가요?"} onPress={() => setUrgent(!urgent)} />
     <Field label="담당자에게 전할 내용" value={note} onChange={setNote} multiline maxLength={4000} />
-    <View style={s.switchRow}><Switch accessibilityLabel="기관 내부 AI 분석 동의" value={consent} onValueChange={setConsent} /><Text style={[s.body, { flex: 1 }]}>선택: 기관 내부 AI로 내용을 분석합니다. 동의하지 않아도 접수됩니다.</Text></View>
-    <Text style={s.caption}>내용은 기관 서버로 전송됩니다. 외부 AI 서비스는 사용하지 않습니다.</Text>
-    <Button disabled={task.busy || !note.trim()} title={task.busy ? '접수 중…' : '도움 요청 보내기'} onPress={() => task.run(async () => {
-      const row = await api.request<Care>('/api/care-requests', { note, features: { category, signals, duration: 'unknown', can_self_manage: false }, allow_local_ai: consent });
+    <Text style={s.caption}>AI 분석은 처음 정한 설정을 자동 적용합니다. 설정에서 언제든 변경할 수 있습니다.</Text>
+    <Button disabled={task.busy || voiceBusy || !note.trim()} title={task.busy ? '접수 중…' : '도움 요청 보내기'} onPress={() => task.run(async () => {
+      const row = await api.request<Care>('/api/care-requests', { note, features: { category, signals, duration: 'unknown', can_self_manage: false } });
       setNote(''); setSignals([]); task.setMessage(row.emergency_notice || '접수되었습니다. 담당자가 확인합니다.');
     })} /><Button secondary title="내 요청 보기" onPress={onDone} /><Notice text={task.message} />
-  </Card>;
+  </Card></>;
 }
-function Home({ api }: { api: ApiClient }) {
+function Home({ api, navigate }: { api: ApiClient; navigate: (tab: string) => void }) {
   const task = useTask(); const [patterns, setPatterns] = useState<{ category: Category; count: number; suggestion: string }[]>([]);
-  return <><Card><Text style={s.kicker}>오늘의 안부</Text><Text style={s.heading}>오늘도 잘 지내고 계신가요?</Text><Text style={s.body}>버튼을 눌러 오늘의 안부를 남겨 주세요.</Text>
-    <Button disabled={task.busy} title="오늘 안부 남기기" onPress={() => task.run(async () => { const r = await api.request<{ day: string }>('/api/attendance', {}); task.setMessage(`${r.day} 안부를 남겼습니다.`); })} />
+  return <><Card><Text style={s.kicker}>나의 생활 돌봄</Text><Text style={s.heading}>어떤 도움이 필요하세요?</Text><Text style={s.body}>버튼을 눌러 나의 생활 돌봄를 남겨 주세요.</Text>
+    <Button title="말로 또는 글로 도움 요청" onPress={() => navigate('request')} />
+    <Button secondary title="내 지역에서 돌봄 일정 찾기" onPress={() => navigate('match')} />
     <Button secondary disabled={task.busy} title="반복 요청 안내 확인" onPress={() => task.run(async () => { const rows = await api.request<typeof patterns>('/api/patterns'); setPatterns(rows); if (!rows.length) task.setMessage('최근 반복 요청 안내가 없습니다.'); })} /><Notice text={task.message} />
   </Card>{patterns.map(p => <Card key={p.category}><Text style={s.label}>{categories[p.category]} · 최근 7일 {p.count}회</Text><Text style={s.body}>{p.suggestion}</Text></Card>)}</>;
 }
@@ -90,9 +74,9 @@ function Approvals({ api }: { api: ApiClient }) {
     {users.map(user => <Card key={user.id}><Text style={s.label}>{user.id} · {roles[user.role]}</Text><Button disabled={task.busy} title="가입 승인" onPress={() => task.run(async () => { await api.request(`/api/admin/approve/${encodeURIComponent(user.id)}`, {}); await load(); task.setMessage('승인했습니다.'); })} /></Card>)}</>;
 }
 function Drafts({ api }: { api: ApiClient }) {
-  const [topic, setTopic] = useState('welcome_notice'), [draft, setDraft] = useState(''); const task = useTask();
-  return <Card><Text style={s.heading}>안내문 초안</Text><Chips options={{ welcome_notice: '환영문', volunteer_etiquette: '봉사 예절', service_introduction: '서비스 소개' }} value={topic} select={setTopic} /><Text style={s.body}>기관 내부 AI로 초안을 만듭니다. 사용 전 담당자가 확인해 주세요.</Text>
-    <Button disabled={task.busy} title={task.busy ? '작성 중…' : '내부 AI로 초안 만들기'} onPress={() => task.run(async () => { const r = await api.request<{ draft: string }>('/api/general-drafts', { topic, allow_local_ai: true }); setDraft(r.draft); })} />{draft ? <Text selectable style={s.body}>{draft}</Text> : null}<Notice text={task.message} />
+  const [topic, setTopic] = useState('welcome_notice'), [draft, setDraft] = useState(''), [source, setSource] = useState(''); const task = useTask();
+  return <Card><Text style={s.heading}>안내문 초안</Text><Chips options={{ welcome_notice: '환영문', volunteer_etiquette: '봉사 예절', service_introduction: '서비스 소개' }} value={topic} select={setTopic} /><Text style={s.body}>기관 내부 AI로 안내문을 작성합니다. AI를 사용할 수 없으면 기본 문구를 제공하며, 내용을 직접 고칠 수 있습니다.</Text>
+    <Button disabled={task.busy} title={task.busy ? '작성 중…' : '내부 AI로 초안 만들기'} onPress={() => task.run(async () => { const r = await api.request<{ draft: string; source: string; reason?: string }>('/api/general-drafts', { topic, allow_local_ai: true }); setDraft(r.draft); setSource(r.source === 'template' ? (r.reason === 'local_disabled' ? '기본 문구 · 서버 AI가 꺼져 있습니다.' : '기본 문구 · AI가 응답하지 않아 준비된 문구를 불러왔습니다.') : '로컬 AI 작성 · 사용 전 검토해 주세요.'); })} />{draft ? <><Text style={s.caption}>{source}</Text><Field label="안내문 편집" value={draft} onChange={setDraft} multiline maxLength={2000} /></> : null}<Notice text={task.message} />
   </Card>;
 }
 function Session({ baseUrl }: { baseUrl: string }) {
@@ -100,19 +84,21 @@ function Session({ baseUrl }: { baseUrl: string }) {
   const api = React.useMemo(() => new ApiClient(baseUrl, () => { setUser(null); setSessionId(x => x + 1); }), [baseUrl, sessionId]);
   useEffect(() => () => api.close(), [api]);
   const logout = () => { api.close(); setUser(null); setTab('home'); setSessionId(x => x + 1); };
-  const menu: Record<string, string> = !user ? {} : user.role === 'elder' ? { home: '안부', request: '도움 요청', list: '내 요청' } : user.role === 'social_worker' ? { queue: '접수함', list: '내 담당', draft: '안내문' } : user.role === 'admin' ? { approvals: '가입 승인', draft: '안내문' } : { home: '내 정보' };
-  return <><View style={s.brand}><Text style={s.logo}>CLover</Text><Text style={s.body}>가까이에서 전하는 안부</Text></View>
+  const menu: Record<string, string> = !user ? {} : user.role === 'elder' ? { home: '홈', request: '도움 요청', match: '돌봄 연결', list: '내 요청', settings: '설정' } : user.role === 'social_worker' ? { queue: '접수함', list: '내 담당', draft: '안내문', settings: '설정' } : user.role === 'admin' ? { approvals: '가입 승인', draft: '안내문', settings: '설정' } : { home: '근무 일정', settings: '설정' };
+  return <><View style={s.brand}><Text style={s.logo}>CLover</Text><Text style={s.body}>생활 속 도움을 연결해요</Text></View>
     {!user ? <Auth key={sessionId} api={api} onLogin={u => { setUser(u); setTab(u.role === 'social_worker' ? 'queue' : u.role === 'admin' ? 'approvals' : 'home'); }} /> : <>
       <View style={s.account}><Text style={s.label}>{user.id} · {roles[user.role]}</Text><Pressable accessibilityRole="button" onPress={logout} style={{ padding: 12 }}><Text style={s.link}>로그아웃</Text></Pressable></View>
+      {user.role === 'elder' && <ConsentGate api={api} />}
       <Chips options={menu} value={tab} select={setTab} />
       <View key={`${user.id}:${tab}`} style={{ gap: 14 }}>
-        {user.role === 'elder' && tab === 'home' && <Home api={api} />}
+        {user.role === 'elder' && tab === 'home' && <Home api={api} navigate={setTab} />}
         {user.role === 'elder' && tab === 'request' && <NewRequest api={api} onDone={() => setTab('list')} />}
         {(user.role === 'elder' || user.role === 'social_worker') && tab === 'list' && <Requests api={api} worker={user.role === 'social_worker'} />}
         {user.role === 'social_worker' && tab === 'queue' && <Requests api={api} worker unassigned />}
         {user.role === 'admin' && tab === 'approvals' && <Approvals api={api} />}
         {(user.role === 'admin' || user.role === 'social_worker') && tab === 'draft' && <Drafts api={api} />}
-        {user.role === 'caregiver' && <Card><Text style={s.heading}>요양보호사 계정</Text><Text style={s.body}>가입·로그인은 사용할 수 있습니다. 일정 배정과 수락 기능은 아직 준비 중입니다.</Text></Card>}
+        {tab === 'settings' && <SettingsScreen api={api} />}
+        {((user.role === 'elder' && tab === 'match') || (user.role === 'caregiver' && tab === 'home')) && <MatchingScreen api={api} caregiver={user.role === 'caregiver'} />}
       </View></>}
     <Text style={s.emergency}>즉시 위험한 상황이면 119에 연락하세요. 이 앱은 자동 신고하지 않습니다.</Text>
   </>;
@@ -127,13 +113,3 @@ export default function App() {
     {error ? <Card><Text style={s.heading}>기관 서버 연결 설정</Text><Text style={s.body}>{error}</Text><Text style={s.caption}>설정 방법: 저장소 docs/MOBILE.md</Text></Card> : <Session baseUrl={url} />}
   </ScrollView></KeyboardAvoidingView>{!active && <View style={s.cover}><Text style={s.logo}>CLover</Text><Text style={s.body}>개인정보 보호를 위해 화면을 가렸습니다.</Text></View>}</View>;
 }
-const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg }, page: { padding: 20, paddingTop: 60, paddingBottom: 50, gap: 16, maxWidth: 720, width: '100%', alignSelf: 'center' },
-  brand: { paddingVertical: 14, gap: 6 }, logo: { fontSize: 36, fontWeight: '800', color: colors.green, letterSpacing: -1 },
-  card: { backgroundColor: colors.card, borderRadius: 22, padding: 22, gap: 16, borderWidth: 1, borderColor: colors.line }, heading: { fontSize: 25, fontWeight: '700', color: colors.dark },
-  kicker: { color: colors.green, fontSize: 15, fontWeight: '700' }, body: { color: colors.muted, fontSize: 17, lineHeight: 26 }, caption: { color: colors.muted, fontSize: 14, lineHeight: 22 }, label: { color: colors.dark, fontSize: 18, fontWeight: '600' },
-  input: { borderWidth: 1, borderColor: colors.line, borderRadius: 12, padding: 14, color: colors.dark, backgroundColor: '#FAFCFA', fontSize: 18, minHeight: 54 },
-  button: { minHeight: 54, borderRadius: 14, backgroundColor: colors.green, padding: 15, alignItems: 'center', justifyContent: 'center' }, secondary: { backgroundColor: '#E8F2EC' }, buttonText: { color: '#fff', fontSize: 18, fontWeight: '700', textAlign: 'center' },
-  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, chip: { paddingHorizontal: 16, paddingVertical: 13, borderWidth: 1, borderColor: colors.line, borderRadius: 24, backgroundColor: '#fff', minHeight: 48 }, chipOn: { backgroundColor: colors.green, borderColor: colors.green }, chipText: { color: colors.green, fontSize: 16, fontWeight: '600' },
-  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 }, notice: { padding: 14, borderRadius: 12, backgroundColor: '#EAF3ED', color: colors.dark, fontSize: 16, lineHeight: 25 }, emergency: { fontSize: 16, lineHeight: 25, color: colors.danger, paddingVertical: 10 }, account: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }, link: { color: colors.green, fontSize: 16, textDecorationLine: 'underline' }, cover: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', gap: 18 },
-});

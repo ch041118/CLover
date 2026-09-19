@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "CLover 안부 케어",
+    "name": "CLover 생활 돌봄",
     "slug": "clover-care",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -10,6 +10,16 @@
     },
     "android": {
       "permissions": []
-    }
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "필요한 도움을 말로 접수하기 위해 마이크를 사용합니다.",
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ]
+    ]
   }
 }
