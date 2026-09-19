@@ -34,8 +34,10 @@ def test_matching_lifecycle_and_scoped_access(api):
     assert c.get('/api/bookings',headers=h['worker1']).status_code==403
     assert c.post(f'/api/bookings/{bid}/decision',headers=h['elder2'],json={'action':'cancel'}).status_code==404
     assert c.post(f'/api/bookings/{bid}/decision',headers=h['elder1'],json={'action':'accept'}).status_code==403
-    assert c.post(f'/api/bookings/{bid}/decision',headers=h['caregiver'],json={'action':'accept'}).json()['status']=='accepted'
-    assert c.post(f'/api/bookings/{bid}/decision',headers=h['caregiver'],json={'action':'decline'}).status_code==409
+    assert c.post(f'/api/bookings/{bid}/decision',headers=h['caregiver'],json={'action':'accept'}).status_code==403
+    assert c.post(f'/api/worker/schedules/{bid}/claim',headers=h['worker1'],json={}).status_code==200
+    assert c.post(f'/api/worker/schedules/{bid}/confirm',headers=h['worker1'],json={'contact_confirmed':True}).json()['status']=='accepted'
+    assert c.post(f'/api/bookings/{bid}/decision',headers=h['caregiver'],json={'action':'decline'}).status_code==403
     assert c.post(f'/api/bookings/{bid}/decision',headers=h['elder1'],json={'action':'cancel'}).json()['status']=='cancelled'
     assert c.post('/api/bookings',headers=h['elder2'],json={'slot_id':sid,'category':'meal'}).status_code==201
 
@@ -56,7 +58,7 @@ def test_region_removal_closes_open_slots_without_erasing_bookings(api):
     c,_=api;h=prepare(c);sid=slot(c,h)
     bid=c.post('/api/bookings',headers=h['elder1'],json={'slot_id':sid,'category':'meal'}).json()['id']
     assert c.post('/api/regions',headers=h['caregiver'],json={'regions':[]}).status_code==200
-    assert c.post(f'/api/bookings/{bid}/decision',headers=h['caregiver'],json={'action':'decline'}).status_code==200
+    assert c.post(f'/api/bookings/{bid}/decision',headers=h['elder1'],json={'action':'cancel'}).status_code==200
     assert c.get('/api/availability',headers=h['caregiver']).json()[0]['state']=='closed'
 
 def test_simultaneous_booking_has_one_winner(api):

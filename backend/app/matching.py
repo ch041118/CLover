@@ -154,7 +154,7 @@ def register_matching(app, db, current, role, audit):
         region=Region(province=slot.province,district=slot.district)
         if not owns_region(session,user.id,region) or not owns_region(session,cg.id,region): raise HTTPException(409,'활동 지역을 다시 확인하세요.')
         conflict=session.scalar(select(Booking.id).join(Availability).where(Booking.elder_id==user.id,
-            Booking.status.in_(['pending','accepted']),Availability.day==slot.day,Availability.start<slot.end,Availability.end>slot.start))
+            Booking.status.in_(['pending','accepted','in_progress']),Availability.day==slot.day,Availability.start<slot.end,Availability.end>slot.start))
         if conflict: raise HTTPException(409,'신청한 시간과 겹칩니다.')
         row=Booking(id=str(uuid.uuid4()),slot_id=slot.id,elder_id=user.id,category=body.category.value)
         slot.state='reserved';session.add(row);audit(session,user,'request_booking',row.id);session.commit()
@@ -169,21 +169,18 @@ def register_matching(app, db, current, role, audit):
 
     @app.post('/api/bookings/{booking_id}/decision')
     def decision(booking_id:str,body:Decision,user=Depends(role('elder','caregiver')),session=Depends(db)):
+        if user.role!='elder' or body.action!='cancel':
+            raise HTTPException(403,'일정 확정·조율은 사회복지사가 담당합니다. 요양보호사는 수행 화면에서 보고해 주세요.')
         b=session.get(Booking,booking_id)
         slot=session.get(Availability,b.slot_id) if b else None
         if not b or user.id not in (b.elder_id,slot.caregiver_id): raise HTTPException(404,'신청을 찾을 수 없습니다.')
         lock(session,b.elder_id,slot.caregiver_id);session.refresh(b);session.refresh(slot)
         if b.status not in ('pending','accepted'): raise HTTPException(409,'이미 처리된 신청입니다.')
-        if body.action in ('accept','decline'):
-            if user.role!='caregiver' or user.id!=slot.caregiver_id: raise HTTPException(403,'접근 권한이 없습니다.')
-            if b.status!='pending' or not slot_future(slot): raise HTTPException(409,'수락 가능한 신청이 아닙니다.')
-        if body.action=='accept':
-            elder=session.get(User,b.elder_id);session.refresh(elder)
-            if elder.status!='approved': raise HTTPException(409,'이용자 상태를 확인하세요.')
-            b.status='accepted'
-        else:
-            b.status='declined' if body.action=='decline' else 'cancelled'
-            region=Region(province=slot.province,district=slot.district)
-            slot.state='open' if slot_future(slot) and owns_region(session,slot.caregiver_id,region) else 'closed'
+        if b.slot_id!=slot.id:
+            raise HTTPException(409,'일정이 변경됐습니다. 새로고침하세요.')
+        session.refresh(slot)
+        b.status='cancelled'
+        region=Region(province=slot.province,district=slot.district)
+        slot.state='open' if slot_future(slot) and owns_region(session,slot.caregiver_id,region) else 'closed'
         audit(session,user,'booking_'+body.action,b.id);session.commit()
         return {'id':b.id,'status':b.status}

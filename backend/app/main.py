@@ -20,6 +20,7 @@ from .schemas import Signup, Login, CareCreate, Review, GeneralDraft
 from .classifier import Classifier
 from .general_ai import GeneralAI, GeneralUnavailable, template_result
 from .matching import register_matching
+from .coordination import register_coordination, update_repeat
 from .speech import Speech, SpeechInput, SpeechUnavailable, SpeechInvalid, suggested_category
 
 passwords = PasswordHash.recommended()
@@ -175,6 +176,8 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None):
         row = Care(id=str(uuid.uuid4()), owner_id=user.id, category=body.features.category.value,
                    encrypted_content=cipher.encrypt(json.dumps(stored, ensure_ascii=False).encode()).decode(), **result)
         session.add(row)
+        session.flush()
+        update_repeat(session, user.id, row.category, new_care=row)
         audit(session, user, 'create_request', row.id)
         session.commit()
         return {**care_view(row), 'privacy': privacy}
@@ -283,4 +286,5 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None):
         return {'text':text,'category':suggested_category(text)}
 
     register_matching(app, db, current, role, audit)
+    register_coordination(app, db, current, role, audit, cipher)
     return app

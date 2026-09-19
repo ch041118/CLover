@@ -6,6 +6,8 @@ import { Care, Category, Role, User, Urgency, categories, roles, urgencies } fro
 import { Button, Card, Field, Chips, useTask, Notice, colors, s } from './src/ui';
 import { SettingsScreen, ConsentGate } from './src/components/SettingsScreen';
 import { MatchingScreen } from './src/components/MatchingScreen';
+import { WorkerStatistics, WorkerSchedules, RepeatInbox, RequestScheduler } from './src/components/WorkerConsole';
+import { CaregiverVisits } from './src/components/CaregiverVisits';
 import { VoiceRequest } from './src/components/VoiceRequest';
 
 function Auth({ api, onLogin }: { api: ApiClient; onLogin: (user: User) => void }) {
@@ -42,7 +44,7 @@ function NewRequest({ api, onDone }: { api: ApiClient; onDone: () => void }) {
 }
 function Home({ api, navigate }: { api: ApiClient; navigate: (tab: string) => void }) {
   const task = useTask(); const [patterns, setPatterns] = useState<{ category: Category; count: number; suggestion: string }[]>([]);
-  return <><Card><Text style={s.kicker}>나의 생활 돌봄</Text><Text style={s.heading}>어떤 도움이 필요하세요?</Text><Text style={s.body}>버튼을 눌러 나의 생활 돌봄를 남겨 주세요.</Text>
+  return <><Card><Text style={s.kicker}>나의 생활 돌봄</Text><Text style={s.heading}>어떤 도움이 필요하세요?</Text><Text style={s.body}>필요한 도움을 요청하거나 내 지역의 돌봄 일정을 찾아보세요.</Text>
     <Button title="말로 또는 글로 도움 요청" onPress={() => navigate('request')} />
     <Button secondary title="내 지역에서 돌봄 일정 찾기" onPress={() => navigate('match')} />
     <Button secondary disabled={task.busy} title="반복 요청 안내 확인" onPress={() => task.run(async () => { const rows = await api.request<typeof patterns>('/api/patterns'); setPatterns(rows); if (!rows.length) task.setMessage('최근 반복 요청 안내가 없습니다.'); })} /><Notice text={task.message} />
@@ -54,7 +56,8 @@ function Requests({ api, worker, unassigned = false }: { api: ApiClient; worker:
   useEffect(() => { task.run(load); }, []);
   if (detail) return <Card><Text style={s.heading}>요청 내용</Text><Text style={s.body}>{detail.content?.note}</Text><Text style={s.label}>{urgencies[detail.urgency]} · {detail.review_required ? '담당자 확인 필요' : '검토 완료'}</Text>
     {detail.emergency_notice && <Text style={s.emergency}>{detail.emergency_notice}</Text>}
-    {worker && <><Text style={s.body}>내용을 확인한 뒤 상태를 확정하세요.</Text>{(['danger', 'need', 'self_care'] as Urgency[]).map(u => <Button key={u} secondary disabled={task.busy} title={`${urgencies[u]}로 확정`} onPress={() => task.run(async () => { await api.request(`/api/worker/review/${encodeURIComponent(detail.id)}`, { urgency: u }); setDetail(null); await load(); task.setMessage('검토 결과를 저장했습니다.'); })} />)}</>}
+    {worker && <><Text style={s.body}>내용을 확인한 뒤 상태를 확정하세요.</Text>{(['danger', 'need', 'self_care'] as Urgency[]).map(u => <Button key={u} secondary disabled={task.busy} title={`${urgencies[u]}로 확정`} onPress={() => task.run(async () => { const updated = await api.request<Care>(`/api/worker/review/${encodeURIComponent(detail.id)}`, { urgency: u }); setDetail({ ...detail, ...updated }); await load(); task.setMessage('검토 결과를 저장했습니다.'); })} />)}</>}
+    {worker && <RequestScheduler api={api} careId={detail.id} reviewRequired={detail.review_required !== false} />}
     <Button secondary title="목록으로" onPress={() => setDetail(null)} /><Notice text={task.message} />
   </Card>;
   return <><Card><Text style={s.heading}>{unassigned ? '미배정 접수함' : worker ? '내 담당 요청' : '내 요청'}</Text><Button secondary disabled={task.busy} title={task.busy ? '불러오는 중…' : '새로고침'} onPress={() => task.run(load)} /><Notice text={task.message} />{loaded && !rows.length && <Text style={s.body}>현재 표시할 요청이 없습니다.</Text>}</Card>
@@ -84,9 +87,9 @@ function Session({ baseUrl }: { baseUrl: string }) {
   const api = React.useMemo(() => new ApiClient(baseUrl, () => { setUser(null); setSessionId(x => x + 1); }), [baseUrl, sessionId]);
   useEffect(() => () => api.close(), [api]);
   const logout = () => { api.close(); setUser(null); setTab('home'); setSessionId(x => x + 1); };
-  const menu: Record<string, string> = !user ? {} : user.role === 'elder' ? { home: '홈', request: '도움 요청', match: '돌봄 연결', list: '내 요청', settings: '설정' } : user.role === 'social_worker' ? { queue: '접수함', list: '내 담당', draft: '안내문', settings: '설정' } : user.role === 'admin' ? { approvals: '가입 승인', draft: '안내문', settings: '설정' } : { home: '근무 일정', settings: '설정' };
+  const menu: Record<string, string> = !user ? {} : user.role === 'elder' ? { home: '홈', request: '도움 요청', match: '돌봄 연결', list: '내 요청', settings: '설정' } : user.role === 'social_worker' ? { stats: '현황', queue: '새 요청', list: '요청 검토', schedules: '일정 관리', repeats: '반복 요청', draft: '안내문', settings: '설정' } : user.role === 'admin' ? { approvals: '가입 승인', draft: '안내문', settings: '설정' } : { home: '돌봄 수행', availability: '근무 가능 시간', settings: '설정' };
   return <><View style={s.brand}><Text style={s.logo}>CLover</Text><Text style={s.body}>생활 속 도움을 연결해요</Text></View>
-    {!user ? <Auth key={sessionId} api={api} onLogin={u => { setUser(u); setTab(u.role === 'social_worker' ? 'queue' : u.role === 'admin' ? 'approvals' : 'home'); }} /> : <>
+    {!user ? <Auth key={sessionId} api={api} onLogin={u => { setUser(u); setTab(u.role === 'social_worker' ? 'stats' : u.role === 'admin' ? 'approvals' : 'home'); }} /> : <>
       <View style={s.account}><Text style={s.label}>{user.id} · {roles[user.role]}</Text><Pressable accessibilityRole="button" onPress={logout} style={{ padding: 12 }}><Text style={s.link}>로그아웃</Text></Pressable></View>
       {user.role === 'elder' && <ConsentGate api={api} />}
       <Chips options={menu} value={tab} select={setTab} />
@@ -97,8 +100,12 @@ function Session({ baseUrl }: { baseUrl: string }) {
         {user.role === 'social_worker' && tab === 'queue' && <Requests api={api} worker unassigned />}
         {user.role === 'admin' && tab === 'approvals' && <Approvals api={api} />}
         {(user.role === 'admin' || user.role === 'social_worker') && tab === 'draft' && <Drafts api={api} />}
+        {user.role === 'social_worker' && tab === 'stats' && <WorkerStatistics api={api} />}
+        {user.role === 'social_worker' && tab === 'schedules' && <WorkerSchedules api={api} userId={user.id} />}
+        {user.role === 'social_worker' && tab === 'repeats' && <RepeatInbox api={api} userId={user.id} />}
+        {user.role === 'caregiver' && tab === 'home' && <CaregiverVisits api={api} />}
         {tab === 'settings' && <SettingsScreen api={api} />}
-        {((user.role === 'elder' && tab === 'match') || (user.role === 'caregiver' && tab === 'home')) && <MatchingScreen api={api} caregiver={user.role === 'caregiver'} />}
+        {((user.role === 'elder' && tab === 'match') || (user.role === 'caregiver' && tab === 'availability')) && <MatchingScreen api={api} caregiver={user.role === 'caregiver'} />}
       </View></>}
     <Text style={s.emergency}>즉시 위험한 상황이면 119에 연락하세요. 이 앱은 자동 신고하지 않습니다.</Text>
   </>;

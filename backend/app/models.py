@@ -77,3 +77,30 @@ class Booking(Base):
     category: Mapped[str] = mapped_column(String(30))
     status: Mapped[str] = mapped_column(String(20), default='pending')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class Coordination(Base):
+    __tablename__ = 'booking_coordination'
+    booking_id: Mapped[str] = mapped_column(ForeignKey('bookings.id'), primary_key=True)
+    worker_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    care_id: Mapped[str | None] = mapped_column(ForeignKey('care_logs.id'), nullable=True, unique=True)
+
+class VisitRecord(Base):
+    __tablename__ = 'visit_records'
+    booking_id: Mapped[str] = mapped_column(ForeignKey('bookings.id'), primary_key=True)
+    caregiver_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    outcome: Mapped[str] = mapped_column(String(20))
+    encrypted_note: Mapped[str] = mapped_column(Text)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class RepeatCase(Base):
+    __tablename__ = 'repeat_cases'
+    __table_args__ = (UniqueConstraint('elder_id', 'category'),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    elder_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    category: Mapped[str] = mapped_column(String(30))
+    worker_id: Mapped[str | None] = mapped_column(ForeignKey('users.id'), nullable=True)
+    state: Mapped[str] = mapped_column(String(20), default='open')
+    auto_route: Mapped[bool] = mapped_column(Boolean, default=False)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    followup_day: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    encrypted_decision: Mapped[str | None] = mapped_column(Text, nullable=True)
