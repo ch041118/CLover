@@ -13,6 +13,8 @@ def booking(c,h):
 def confirm(c,h,bid):
     assert c.post(f'/api/worker/schedules/{bid}/claim',headers=h['worker1'],json={}).status_code==200
     assert c.post(f'/api/worker/schedules/{bid}/confirm',headers=h['worker1'],json={'contact_confirmed':True}).status_code==200
+    p=c.get('/api/caregiver/proposals',headers=h['caregiver']).json()[0]
+    assert c.post('/api/caregiver/proposals/'+p['proposal_id']+'/decision',headers=h['caregiver'],json={'action':'accept'}).json()['status']=='accepted'
 
 def test_worker_coordinates_and_caregiver_performs(api):
     c,app=api;h=prepare(c);bid=booking(c,h)

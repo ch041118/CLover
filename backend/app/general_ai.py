@@ -38,7 +38,7 @@ class GeneralAI:
 TEMPLATES = {
     GeneralTopic.welcome_notice: 'CLover에 오신 것을 환영합니다. 식사 준비, 외출 동행, 생활 속 도움이 필요할 때 편하게 요청해 주세요.',
     GeneralTopic.volunteer_etiquette: '상대방의 이야기를 충분히 듣고 필요한 도움을 먼저 여쭤보세요. 개인적인 이야기는 다른 사람에게 전달하지 않고 약속한 시간을 지켜 주세요.',
-    GeneralTopic.service_introduction: 'CLover는 생활 속 도움 요청을 접수하고, 선택한 지역과 일정에 맞는 돌봄 연결을 돕습니다. 신청한 일정은 사회복지사가 이용자와 요양보호사에게 확인한 뒤 확정합니다.',
+    GeneralTopic.service_introduction: 'CLover는 생활 속 도움 요청을 접수하고, 선택한 지역과 일정에 맞는 돌봄 연결을 돕습니다. 신청한 일정은 사회복지사가 조율하고 요양보호사가 수락하면 확정됩니다.',
 }
 
 def template_result(topic, reason):

@@ -7,7 +7,7 @@ import { Button, Card, Chips, Field, Notice, s, useTask } from '../ui';
 type Region = { province: string; district: string };
 type Slot = Region & { id: string; caregiver_id: string; day: string; start: string; end: string; state: string };
 type Booking = Slot & { elder_id: string; category: Category; status: string; slot_id: string };
-const labels: Record<string,string> = { pending:'사회복지사 조율 대기', accepted:'일정 확정', in_progress:'돌봄 진행 중', completed:'돌봄 완료', attention:'사회복지사 확인 필요', declined:'수락하지 않음', cancelled:'취소됨', open:'신청 가능', reserved:'신청 있음', closed:'마감' };
+const labels: Record<string,string> = { offered:'요양보호사 수락 대기',pending:'사회복지사 조율 대기', accepted:'일정 확정', in_progress:'돌봄 진행 중', completed:'돌봄 완료', attention:'사회복지사 확인 필요', declined:'수락하지 않음', cancelled:'취소됨', open:'신청 가능', reserved:'신청 있음', closed:'마감' };
 const hours = Object.fromEntries(Array.from({ length: 18 }, (_, i) => { const h = `${String(i + 6).padStart(2,'0')}:00`; return [h,h]; }));
 function nextDay(i: number) { return new Date(Date.now()+i*86400000+9*3600000).toISOString().slice(0,10); }
 export function MatchingScreen({ api, caregiver }: { api: ApiClient; caregiver: boolean }) {
@@ -41,7 +41,7 @@ export function MatchingScreen({ api, caregiver }: { api: ApiClient; caregiver: 
       if(caregiver){await api.request('/api/availability',body);await refresh();task.setMessage('가능한 일정을 등록했습니다.');}
       else {setSlots(await api.request('/api/matches',body));setSearched(true);}
     })}/>
-    <Text style={s.caption}>사회복지사가 당사자와 조율한 뒤 일정을 확정합니다. 시간은 한국 시간이며 이동 시간은 별도로 고려해 주세요.</Text>
+    <Text style={s.caption}>사회복지사가 조율하고 요양보호사가 수락하면 일정이 확정됩니다. 시간은 한국 시간이며 이동 시간은 별도로 고려해 주세요.</Text>
   </Card>
   {searched && !slots.length && <Card><Text style={s.body}>맞는 일정이 아직 없습니다. 시간 범위를 넓히거나 다른 날짜를 선택해 주세요.</Text></Card>}
   {slots.map(row=><Card key={row.id}><Text style={s.label}>{row.day} · {row.start}–{row.end}</Text><Text style={s.body}>{row.province} {row.district} · {caregiver ? labels[row.state] : `요양보호사 ${row.caregiver_id}`}</Text>
@@ -52,6 +52,6 @@ export function MatchingScreen({ api, caregiver }: { api: ApiClient; caregiver: 
     })}/>}</Card>)}
   <Card><Text style={s.heading}>{caregiver?'등록한 일정 안내':'내 신청 일정'}</Text><Button secondary disabled={task.busy} title="일정 상태 새로고침" onPress={()=>task.run(refresh)}/>{!bookings.length && <Text style={s.body}>아직 신청한 일정이 없습니다.</Text>}</Card>
   {!caregiver && bookings.map(b=><Card key={b.id}><Text style={s.label}>{labels[b.status]} · {categories[b.category]}</Text><Text style={s.body}>{b.day} {b.start}–{b.end}{'\n'}{b.province} {b.district}{'\n'}{caregiver ? `이용자 ${b.elder_id}` : `요양보호사 ${b.caregiver_id}`}</Text>
-    {['pending','accepted'].includes(b.status) && <Button secondary disabled={task.busy} title="신청 취소" onPress={()=>Alert.alert('일정을 취소할까요?','상대방의 일정 목록에도 취소로 표시됩니다.',[{text:'유지',style:'cancel'},{text:'취소 확정',style:'destructive',onPress:()=>decide(b.id,'cancel')}])}/>}
+    {['pending','offered','accepted'].includes(b.status) && <Button secondary disabled={task.busy} title="신청 취소" onPress={()=>Alert.alert('일정을 취소할까요?','상대방의 일정 목록에도 취소로 표시됩니다.',[{text:'유지',style:'cancel'},{text:'취소 확정',style:'destructive',onPress:()=>decide(b.id,'cancel')}])}/>}
   </Card>)}</>;
 }

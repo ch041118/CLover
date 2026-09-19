@@ -5,14 +5,14 @@ from typing import Literal
 from fastapi import Depends, HTTPException, Query
 from pydantic import Field, field_validator
 from sqlalchemy import select, update, func
-from .models import User, Care, Availability, Booking, Coordination, VisitRecord, RepeatCase, ServiceRegion
+from .models import User, Care, Availability, Booking, Coordination, VisitRecord, RepeatCase, ServiceRegion, ScheduleProposal
 from .schemas import StrictModel, Category
 from .matching import KST, slot_future
 from .privacy import SECRET, normalize
 
 WINDOW_DAYS=7
 THRESHOLD=3
-ACTIVE=('pending','accepted','in_progress')
+ACTIVE=('pending','offered','accepted','in_progress')
 
 def lock_users(session,*ids):
     for key in sorted(set(ids)):
@@ -48,6 +48,15 @@ class Assign(Confirm):
 class Reschedule(Confirm):
     slot_id: str = Field(max_length=36)
 
+class ProposalDecision(StrictModel):
+    action: Literal['accept','decline']
+    reason: str = Field(default='',max_length=1500)
+    @field_validator('reason')
+    @classmethod
+    def clean(cls,v):
+        if SECRET.search(normalize(v)): raise ValueError('Check reason')
+        return v.strip()
+
 class VisitInput(StrictModel):
     outcome: Literal['completed','unable','concern']
     note: str = Field(min_length=1,max_length=1500)
@@ -72,9 +81,28 @@ def register_coordination(app,db,current,role,audit,cipher):
         return {'slot_id':slot.id,'caregiver_id':slot.caregiver_id,'day':slot.day,'start':slot.start,'end':slot.end,
                 'province':slot.province,'district':slot.district}
 
+    def proposal_data(p):
+        return {'proposal_id':p.id,'stage':p.stage,'proposal_status':p.status,
+                'reason':cipher.decrypt(p.encrypted_reason.encode()).decode() if p.encrypted_reason else ''}
+
+    def offer(session,b,slot,stage):
+        for old in session.scalars(select(ScheduleProposal).where(ScheduleProposal.booking_id==b.id,
+                ScheduleProposal.status.in_(('offered','accepted')))):
+            old.status='withdrawn'
+        b.status='offered'
+        p=ScheduleProposal(id=str(uuid.uuid4()),booking_id=b.id,slot_id=slot.id,
+            caregiver_id=slot.caregiver_id,stage=stage,status='offered')
+        session.add(p);session.flush()
+        return p
+
+    def stage_for(session,coord):
+        care=session.get(Care,coord.care_id) if coord and coord.care_id else None
+        return 'urgent' if care and care.urgency=='danger' else 'remaining'
+
     def booking_data(session,b,slot):
         coord=session.get(Coordination,b.id);record=session.get(VisitRecord,b.id)
-        return {**slot_data(slot),'id':b.id,'elder_id':b.elder_id,'category':b.category,'status':b.status,
+        proposal=session.scalar(select(ScheduleProposal).where(ScheduleProposal.booking_id==b.id).order_by(ScheduleProposal.created_at.desc()))
+        return {**slot_data(slot),**(proposal_data(proposal) if proposal else {}),'id':b.id,'elder_id':b.elder_id,'category':b.category,'status':b.status,
                 'worker_id':coord.worker_id if coord else None,'care_id':coord.care_id if coord else None,
                 'outcome':record.outcome if record else None}
 
@@ -130,12 +158,12 @@ def register_coordination(app,db,current,role,audit,cipher):
     @app.post('/api/worker/schedules/{bid}/confirm')
     def confirm(bid:str,body:Confirm,user=Depends(role('social_worker')),session=Depends(db)):
         if not body.contact_confirmed: raise HTTPException(422,'당사자와 일정을 확인해 주세요.')
-        b,slot,_=owned(session,bid,user)
+        b,slot,coord=owned(session,bid,user)
         if b.status!='pending' or not slot_future(slot): raise HTTPException(409,'확정할 수 없는 일정입니다.')
         for uid in [b.elder_id,slot.caregiver_id]:
             actor=session.get(User,uid);session.refresh(actor)
             if actor.status!='approved': raise HTTPException(409,'계정 상태를 확인하세요.')
-        b.status='accepted';audit(session,user,'coordinate_confirm',bid);session.commit()
+        offer(session,b,slot,stage_for(session,coord));audit(session,user,'coordinate_offer',bid);session.commit()
         return booking_data(session,b,slot)
 
     @app.get('/api/worker/care/{care_id}/slots')
@@ -157,9 +185,10 @@ def register_coordination(app,db,current,role,audit,cipher):
         if care.review_required: raise HTTPException(409,'요청 분류를 먼저 검토해 주세요.')
         if session.scalar(select(Coordination.booking_id).where(Coordination.care_id==care.id)): raise HTTPException(409,'이미 연결된 요청입니다. 기존 일정에서 변경하세요.')
         check_slot(session,slot,care.owner_id)
-        b=Booking(id=str(uuid.uuid4()),slot_id=slot.id,elder_id=care.owner_id,category=care.category,status='accepted')
+        b=Booking(id=str(uuid.uuid4()),slot_id=slot.id,elder_id=care.owner_id,category=care.category,status='offered')
         slot.state='reserved';session.add(b);session.flush()
         session.add(Coordination(booking_id=b.id,worker_id=user.id,care_id=care.id))
+        offer(session,b,slot,'urgent' if care.urgency=='danger' else 'remaining')
         audit(session,user,'coordinate_assign',b.id);session.commit()
         return booking_data(session,b,slot)
 
@@ -172,10 +201,11 @@ def register_coordination(app,db,current,role,audit,cipher):
         lock_users(session,b.elder_id,old.caregiver_id,target.caregiver_id);session.refresh(b);session.refresh(old);session.refresh(target)
         coord=session.get(Coordination,bid)
         if not coord or coord.worker_id!=user.id: raise HTTPException(403,'담당 일정만 변경할 수 있습니다.')
-        if b.slot_id!=original or b.status not in ('pending','accepted'): raise HTTPException(409,'변경할 수 없는 일정입니다.')
+        if b.slot_id!=original or b.status not in ('pending','offered','accepted','declined'): raise HTTPException(409,'변경할 수 없는 일정입니다.')
         check_slot(session,target,b.elder_id,exclude=bid)
         old.state='closed'  # Explicitly close the superseded slot; provider can publish a new one.
         target.state='reserved';b.slot_id=target.id
+        offer(session,b,target,stage_for(session,coord))
         audit(session,user,'coordinate_reschedule',bid);session.commit()
         return booking_data(session,b,target)
 
@@ -188,9 +218,73 @@ def register_coordination(app,db,current,role,audit,cipher):
     @app.post('/api/worker/schedules/{bid}/cancel')
     def cancel(bid:str,user=Depends(role('social_worker')),session=Depends(db)):
         b,slot,_=owned(session,bid,user)
-        if b.status not in ('pending','accepted'): raise HTTPException(409,'진행 중이거나 종료된 일정은 취소할 수 없습니다.')
-        b.status='cancelled';slot.state='closed';audit(session,user,'coordinate_cancel',bid);session.commit()
+        if b.status not in ('pending','offered','accepted','declined'): raise HTTPException(409,'진행 중이거나 종료된 일정은 취소할 수 없습니다.')
+        b.status='cancelled';slot.state='closed'
+        session.execute(update(ScheduleProposal).where(ScheduleProposal.booking_id==bid,ScheduleProposal.status.in_(('offered','accepted'))).values(status='withdrawn'))
+        audit(session,user,'coordinate_cancel',bid);session.commit()
         return {'status':b.status}
+
+    @app.get('/api/caregiver/proposals')
+    def proposals(user=Depends(role('caregiver')),session=Depends(db)):
+        rows=session.scalars(select(ScheduleProposal).where(ScheduleProposal.caregiver_id==user.id).order_by(ScheduleProposal.created_at.desc()).limit(200))
+        result=[]
+        for p in rows:
+            b=session.get(Booking,p.booking_id);slot=session.get(Availability,p.slot_id)
+            result.append({**slot_data(slot),**proposal_data(p),'id':b.id,'elder_id':b.elder_id,'category':b.category,
+                'status':b.status if b.slot_id==p.slot_id and p.status in ('offered','accepted') else p.status})
+        return result
+
+    @app.post('/api/caregiver/proposals/{pid}/decision')
+    def decide_proposal(pid:str,body:ProposalDecision,user=Depends(role('caregiver')),session=Depends(db)):
+        p=session.get(ScheduleProposal,pid)
+        if not p or p.caregiver_id!=user.id: raise HTTPException(404,'제안을 찾을 수 없습니다.')
+        b=session.get(Booking,p.booking_id)
+        lock_users(session,b.elder_id,user.id);session.refresh(p);session.refresh(b)
+        slot=session.get(Availability,p.slot_id);session.refresh(slot)
+        if b.slot_id!=p.slot_id or p.status not in ('offered','accepted') or b.status not in ('offered','accepted'):
+            raise HTTPException(409,'이미 처리되거나 변경된 제안입니다.')
+        if body.action=='accept':
+            if p.status!='offered' or b.status!='offered' or not slot_future(slot) or slot.state!='reserved':
+                raise HTTPException(409,'수락할 수 없는 제안입니다.')
+            elder=session.get(User,b.elder_id);session.refresh(elder)
+            if elder.status!='approved': raise HTTPException(409,'이용자 계정 상태를 확인하세요.')
+            b.status=p.status='accepted'
+        else:
+            if not body.reason: raise HTTPException(422,'조율을 위해 거절 사유를 남겨 주세요.')
+            b.status=p.status='declined';slot.state='closed'
+            p.encrypted_reason=cipher.encrypt(body.reason.encode()).decode()
+        audit(session,user,'proposal_'+body.action,p.id);session.commit()
+        return {'status':b.status}
+
+    @app.post('/api/worker/scheduler/run')
+    def run_scheduler(user=Depends(role('social_worker')),session=Depends(db)):
+        # One serial planning transaction: no duplicate or overlapping offers across concurrent runs.
+        ids=session.scalars(select(User.id).where(User.role.in_(('elder','caregiver')))).all()
+        lock_users(session,*ids)
+        today=datetime.now(KST).date();until=today+timedelta(days=7)
+        cares=session.scalars(select(Care).where(Care.worker_id==user.id,Care.review_required.is_(False),
+            ~Care.id.in_(select(Coordination.care_id).where(Coordination.care_id.is_not(None))))
+            .order_by(Care.created_at).limit(100)).all()
+        slots=session.scalars(select(Availability).where(Availability.state=='open',Availability.day>=str(today),
+            Availability.day<=str(until)).order_by(Availability.day,Availability.start,Availability.id)).all()
+        offered=[];skipped=[]
+        for care in cares:
+            if care.urgency=='danger':
+                skipped.append({'care_id':care.id,'reason':'긴급 요청: 3차 직접 조율 필요'});continue
+            selected=None
+            for slot in slots:
+                try: check_slot(session,slot,care.owner_id)
+                except HTTPException: continue
+                selected=slot;break
+            if not selected:
+                skipped.append({'care_id':care.id,'reason':'지역·시간에 맞는 빈 일정 없음'});continue
+            b=Booking(id=str(uuid.uuid4()),slot_id=selected.id,elder_id=care.owner_id,category=care.category,status='offered')
+            selected.state='reserved';session.add(b);session.flush()
+            session.add(Coordination(booking_id=b.id,worker_id=user.id,care_id=care.id))
+            offer(session,b,selected,'initial');offered.append(b.id)
+            audit(session,user,'scheduler_offer',b.id)
+        session.commit()
+        return {'offered':offered,'skipped':skipped,'through_day':str(until),'limit':100}
 
     @app.post('/api/caregiver/visits/{bid}/start')
     def start(bid:str,user=Depends(role('caregiver')),session=Depends(db)):

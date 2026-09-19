@@ -36,7 +36,7 @@ def test_matching_lifecycle_and_scoped_access(api):
     assert c.post(f'/api/bookings/{bid}/decision',headers=h['elder1'],json={'action':'accept'}).status_code==403
     assert c.post(f'/api/bookings/{bid}/decision',headers=h['caregiver'],json={'action':'accept'}).status_code==403
     assert c.post(f'/api/worker/schedules/{bid}/claim',headers=h['worker1'],json={}).status_code==200
-    assert c.post(f'/api/worker/schedules/{bid}/confirm',headers=h['worker1'],json={'contact_confirmed':True}).json()['status']=='accepted'
+    assert c.post(f'/api/worker/schedules/{bid}/confirm',headers=h['worker1'],json={'contact_confirmed':True}).json()['status']=='offered'
     assert c.post(f'/api/bookings/{bid}/decision',headers=h['caregiver'],json={'action':'decline'}).status_code==403
     assert c.post(f'/api/bookings/{bid}/decision',headers=h['elder1'],json={'action':'cancel'}).json()['status']=='cancelled'
     assert c.post('/api/bookings',headers=h['elder2'],json={'slot_id':sid,'category':'meal'}).status_code==201

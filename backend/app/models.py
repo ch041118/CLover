@@ -104,3 +104,14 @@ class RepeatCase(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     followup_day: Mapped[str | None] = mapped_column(String(10), nullable=True)
     encrypted_decision: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+class ScheduleProposal(Base):
+    __tablename__ = 'schedule_proposals'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    booking_id: Mapped[str] = mapped_column(ForeignKey('bookings.id'), index=True)
+    slot_id: Mapped[str] = mapped_column(ForeignKey('availability.id'))
+    caregiver_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default='offered')
+    encrypted_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

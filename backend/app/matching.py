@@ -154,7 +154,7 @@ def register_matching(app, db, current, role, audit):
         region=Region(province=slot.province,district=slot.district)
         if not owns_region(session,user.id,region) or not owns_region(session,cg.id,region): raise HTTPException(409,'활동 지역을 다시 확인하세요.')
         conflict=session.scalar(select(Booking.id).join(Availability).where(Booking.elder_id==user.id,
-            Booking.status.in_(['pending','accepted','in_progress']),Availability.day==slot.day,Availability.start<slot.end,Availability.end>slot.start))
+            Booking.status.in_(['pending','offered','accepted','in_progress']),Availability.day==slot.day,Availability.start<slot.end,Availability.end>slot.start))
         if conflict: raise HTTPException(409,'신청한 시간과 겹칩니다.')
         row=Booking(id=str(uuid.uuid4()),slot_id=slot.id,elder_id=user.id,category=body.category.value)
         slot.state='reserved';session.add(row);audit(session,user,'request_booking',row.id);session.commit()
@@ -175,7 +175,7 @@ def register_matching(app, db, current, role, audit):
         slot=session.get(Availability,b.slot_id) if b else None
         if not b or user.id not in (b.elder_id,slot.caregiver_id): raise HTTPException(404,'신청을 찾을 수 없습니다.')
         lock(session,b.elder_id,slot.caregiver_id);session.refresh(b);session.refresh(slot)
-        if b.status not in ('pending','accepted'): raise HTTPException(409,'이미 처리된 신청입니다.')
+        if b.status not in ('pending','offered','accepted'): raise HTTPException(409,'이미 처리된 신청입니다.')
         if b.slot_id!=slot.id:
             raise HTTPException(409,'일정이 변경됐습니다. 새로고침하세요.')
         session.refresh(slot)
