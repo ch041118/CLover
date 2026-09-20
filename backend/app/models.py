@@ -115,3 +115,15 @@ class ScheduleProposal(Base):
     status: Mapped[str] = mapped_column(String(20), default='offered')
     encrypted_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class CareDecision(Base):
+    __tablename__ = 'care_decisions'
+    care_id: Mapped[str] = mapped_column(ForeignKey('care_logs.id'), primary_key=True)
+    worker_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    method: Mapped[str] = mapped_column(String(20))
+    suggested_urgency: Mapped[str] = mapped_column(String(20))
+    final_urgency: Mapped[str] = mapped_column(String(20))
+    ai_prepared: Mapped[bool] = mapped_column(Boolean, default=False)
+    edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    encrypted_handoff: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

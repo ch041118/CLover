@@ -7,7 +7,7 @@ import { states, stages } from './WorkerConsole';
 type Visit={id:string;day:string;start:string;end:string;elder_id:string;category:Category;province:string;district:string;status:string;proposal_id?:string;stage?:string;reason?:string};
 function VisitCard({api,row,reload}:{api:ApiClient;row:Visit;reload:()=>Promise<void>}){
   const [reason,setReason]=useState('');
-  const [outcome,setOutcome]=useState(row.status==='in_progress'?'completed':'unable'),[note,setNote]=useState(''),[record,setRecord]=useState('');const task=useTask();
+  const [outcome,setOutcome]=useState(row.status==='in_progress'?'completed':'unable'),[note,setNote]=useState(''),[record,setRecord]=useState(''),[handoff,setHandoff]=useState('');const task=useTask();
   return <Card><Text style={s.label}>{states[row.status]||row.status} · {categories[row.category]}</Text><Text style={s.body}>{row.day} {row.start}–{row.end}{'\n'}{row.elder_id} · {row.province} {row.district}</Text>
     {row.stage&&<Text style={s.label}>{stages[row.stage]}</Text>}
     {row.reason&&<Text style={s.body}>거절 사유: {row.reason}</Text>}
@@ -16,6 +16,8 @@ function VisitCard({api,row,reload}:{api:ApiClient;row:Visit;reload:()=>Promise<
       <Field label="일정이 어려운 이유" value={reason} onChange={setReason} multiline maxLength={1500}/>
       <Button secondary disabled={task.busy||!reason.trim()} title={row.status==='accepted'?'수락 철회 · 재조율 요청':'일정 거절 · 재조율 요청'} onPress={()=>task.run(async()=>{await api.request(`/api/caregiver/proposals/${row.proposal_id}/decision`,{action:'decline',reason});await reload();})}/>
     </>}
+    {['offered','accepted','in_progress','completed','attention'].includes(row.status)&&<Button secondary disabled={task.busy} title="사회복지사가 검토한 돌봄 전달문" onPress={()=>task.run(async()=>{const r=await api.request<{handoff:string|null}>(`/api/caregiver/visits/${row.id}/handoff`);setHandoff(r.handoff||'승인된 전달문이 없습니다. 담당자에게 확인해 주세요.');})}/>}
+    {handoff&&<Text style={s.body}>{handoff}</Text>}
     {row.status==='pending' &&<Text style={s.body}>사회복지사가 일정을 조율 중입니다. 확정 후 직접 돌봄을 수행해 주세요.</Text>}
     {row.status==='accepted'&&<Button disabled={task.busy} title="방문 당일 · 돌봄 시작" onPress={()=>task.run(async()=>{await api.request(`/api/caregiver/visits/${row.id}/start`,{});await reload();})}/>}
     {['accepted','in_progress'].includes(row.status)&&<><Chips options={row.status==='in_progress'?{completed:'돌봄 완료',unable:'수행 어려움',concern:'특이사항 보고'}:{unable:'수행 어려움',concern:'특이사항 보고'}} value={outcome} select={setOutcome}/><Field label="수행 내용·담당자에게 전할 내용" value={note} onChange={setNote} multiline maxLength={1500}/><Button disabled={task.busy||!note.trim()||(outcome==='completed'&&row.status!=='in_progress')} title="사회복지사에게 수행 결과 남기기" onPress={()=>task.run(async()=>{await api.request(`/api/caregiver/visits/${row.id}/report`,{outcome,note});await reload();})}/></>}

@@ -1,5 +1,5 @@
 """All care data is local-only. No external model clients exist."""
-from .schemas import Features, Signal, ModelResult
+from .schemas import Features, Signal, PreparedModelResult
 from .privacy import inspect_care, normalize
 from .local_model import LocalModel, LocalUnavailable, LocalInputTooLong
 
@@ -29,13 +29,15 @@ class Classifier:
             return result('uncertain', 'local_disabled')
         try:
             parsed = self.local_model.classify(note, features)
-            parsed = ModelResult.model_validate(parsed.model_dump())
+            parsed = PreparedModelResult.model_validate(parsed.model_dump())
             if parsed.confidence < 0.85:
                 return result('uncertain', 'local_low_confidence', parsed.confidence)
             urgency = parsed.urgency
             if urgency == 'self_care' and ({Signal.fall, Signal.missed_medication} & set(features.signals)):
                 urgency = 'need'
-            return result(urgency, 'local_model', parsed.confidence)
+            answer=result(urgency, 'local_model', parsed.confidence)
+            answer['preparation']={'summary':parsed.summary,'evidence':parsed.evidence}
+            return answer
         except LocalInputTooLong:
             return result('uncertain', 'local_input_too_long')
         except (LocalUnavailable, ValueError, TypeError):

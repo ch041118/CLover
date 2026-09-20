@@ -7,6 +7,7 @@ import { Button, Card, Field, Chips, useTask, Notice, colors, s } from './src/ui
 import { SettingsScreen, ConsentGate } from './src/components/SettingsScreen';
 import { MatchingScreen } from './src/components/MatchingScreen';
 import { WorkerStatistics, WorkerSchedules, RepeatInbox, RequestScheduler } from './src/components/WorkerConsole';
+import { WorkerDesk } from './src/components/WorkerDesk';
 import { CaregiverVisits } from './src/components/CaregiverVisits';
 import { VoiceRequest } from './src/components/VoiceRequest';
 
@@ -87,9 +88,9 @@ function Session({ baseUrl }: { baseUrl: string }) {
   const api = React.useMemo(() => new ApiClient(baseUrl, () => { setUser(null); setSessionId(x => x + 1); }), [baseUrl, sessionId]);
   useEffect(() => () => api.close(), [api]);
   const logout = () => { api.close(); setUser(null); setTab('home'); setSessionId(x => x + 1); };
-  const menu: Record<string, string> = !user ? {} : user.role === 'elder' ? { home: '홈', request: '도움 요청', match: '돌봄 연결', list: '내 요청', settings: '설정' } : user.role === 'social_worker' ? { stats: '현황', queue: '새 요청', list: '요청 검토', schedules: '일정 관리', repeats: '반복 요청', draft: '안내문', settings: '설정' } : user.role === 'admin' ? { approvals: '가입 승인', draft: '안내문', settings: '설정' } : { home: '돌봄 수행', availability: '근무 가능 시간', settings: '설정' };
+  const menu: Record<string, string> = !user ? {} : user.role === 'elder' ? { home: '홈', request: '도움 요청', match: '돌봄 연결', list: '내 요청', settings: '설정' } : user.role === 'social_worker' ? { desk: 'AI 업무함', stats: '현황', queue: '새 요청', list: '요청 검토', schedules: '일정 관리', repeats: '반복 요청', draft: '안내문', settings: '설정' } : user.role === 'admin' ? { approvals: '가입 승인', draft: '안내문', settings: '설정' } : { home: '돌봄 수행', availability: '근무 가능 시간', settings: '설정' };
   return <><View style={s.brand}><Text style={s.logo}>CLover</Text><Text style={s.body}>생활 속 도움을 연결해요</Text></View>
-    {!user ? <Auth key={sessionId} api={api} onLogin={u => { setUser(u); setTab(u.role === 'social_worker' ? 'stats' : u.role === 'admin' ? 'approvals' : 'home'); }} /> : <>
+    {!user ? <Auth key={sessionId} api={api} onLogin={u => { setUser(u); setTab(u.role === 'social_worker' ? 'desk' : u.role === 'admin' ? 'approvals' : 'home'); }} /> : <>
       <View style={s.account}><Text style={s.label}>{user.id} · {roles[user.role]}</Text><Pressable accessibilityRole="button" onPress={logout} style={{ padding: 12 }}><Text style={s.link}>로그아웃</Text></Pressable></View>
       {user.role === 'elder' && <ConsentGate api={api} />}
       <Chips options={menu} value={tab} select={setTab} />
@@ -100,6 +101,7 @@ function Session({ baseUrl }: { baseUrl: string }) {
         {user.role === 'social_worker' && tab === 'queue' && <Requests api={api} worker unassigned />}
         {user.role === 'admin' && tab === 'approvals' && <Approvals api={api} />}
         {(user.role === 'admin' || user.role === 'social_worker') && tab === 'draft' && <Drafts api={api} />}
+        {user.role === 'social_worker' && tab === 'desk' && <WorkerDesk api={api} navigate={setTab} />}
         {user.role === 'social_worker' && tab === 'stats' && <WorkerStatistics api={api} />}
         {user.role === 'social_worker' && tab === 'schedules' && <WorkerSchedules api={api} userId={user.id} />}
         {user.role === 'social_worker' && tab === 'repeats' && <RepeatInbox api={api} userId={user.id} />}

@@ -21,6 +21,7 @@ from .classifier import Classifier
 from .general_ai import GeneralAI, GeneralUnavailable, template_result
 from .matching import register_matching
 from .coordination import register_coordination, update_repeat
+from .desk import register_desk, prepare_packet, record_decision
 from .speech import Speech, SpeechInput, SpeechUnavailable, SpeechInvalid, suggested_category
 
 passwords = PasswordHash.recommended()
@@ -170,9 +171,10 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None):
         consent = body.allow_local_ai if body.allow_local_ai is not None else bool(pref and pref.local_ai)
         result = classifier.classify(body.note, body.features, consent)
         privacy = result.pop("privacy")
+        preparation = result.pop("preparation", {})
         if privacy["sensitivity"] == "restricted":
             raise HTTPException(422, "인증키·비밀번호를 제거하고 다시 접수하세요. 긴급 상황이면 119에 연락하세요.")
-        stored = {**body.model_dump(mode="json"), "allow_local_ai": consent, "privacy": privacy}
+        stored = {**body.model_dump(mode="json"), "allow_local_ai": consent, "privacy": privacy, "assistant": prepare_packet(body.note, body.features, result, preparation)}
         row = Care(id=str(uuid.uuid4()), owner_id=user.id, category=body.features.category.value,
                    encrypted_content=cipher.encrypt(json.dumps(stored, ensure_ascii=False).encode()).decode(), **result)
         session.add(row)
@@ -228,6 +230,10 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None):
         row = session.get(Care, care_id)
         if not row or row.worker_id != user.id:
             raise HTTPException(404, '요청을 찾을 수 없습니다.')
+        from .coordination import lock_users
+        lock_users(session,row.owner_id);session.refresh(row)
+        if row.worker_id!=user.id: raise HTTPException(409,'담당자가 변경됐습니다.')
+        record_decision(session,row,user,body.urgency,'manual',None,False,cipher)
         row.urgency, row.review_required, row.source = body.urgency, False, 'human_review'
         audit(session, user, 'review_' + body.urgency, row.id)
         session.commit()
@@ -285,6 +291,7 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None):
         audit(session,user,'transcribe','local');session.commit()
         return {'text':text,'category':suggested_category(text)}
 
+    register_desk(app, db, role, audit, cipher)
     register_matching(app, db, current, role, audit)
     register_coordination(app, db, current, role, audit, cipher)
     return app

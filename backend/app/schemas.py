@@ -60,6 +60,15 @@ class ModelResult(StrictModel):
     urgency: str = Field(pattern='^(danger|need|self_care|uncertain)$')
     confidence: float = Field(ge=0, le=1, allow_inf_nan=False, strict=True)
 
+class PreparedModelResult(ModelResult):
+    summary: str = Field(default='',max_length=240)
+    evidence: list[str] = Field(default_factory=list,max_length=3)
+    @field_validator('evidence')
+    @classmethod
+    def bounded(cls,values):
+        if any(not v.strip() or len(v)>180 for v in values): raise ValueError('Invalid evidence')
+        return values
+
 class Review(StrictModel):
     urgency: str = Field(pattern='^(danger|need|self_care)$')
 
