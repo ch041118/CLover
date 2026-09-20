@@ -4,11 +4,12 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 from fastapi import Depends, HTTPException, Query
 from pydantic import Field, field_validator
-from sqlalchemy import select, update, func
-from .models import User, Care, Availability, Booking, Coordination, VisitRecord, RepeatCase, ServiceRegion, ScheduleProposal
+from sqlalchemy import select, update, func, or_
+from .models import User, Care, Availability, Booking, Coordination, VisitRecord, RepeatCase, ServiceRegion, ScheduleProposal, CaregiverTeam
 from .schemas import StrictModel, Category
 from .matching import KST, slot_future
 from .privacy import SECRET, normalize
+from .teams import require_team, managed
 
 WINDOW_DAYS=7
 THRESHOLD=3
@@ -76,7 +77,7 @@ class CaseDecision(StrictModel):
     def note_ok(cls,v): return VisitInput.note_ok(v)
 
 
-def register_coordination(app,db,current,role,audit,cipher):
+def register_coordination(app,db,current,role,audit,cipher,routing):
     def slot_data(slot):
         return {'slot_id':slot.id,'caregiver_id':slot.caregiver_id,'day':slot.day,'start':slot.start,'end':slot.end,
                 'province':slot.province,'district':slot.district}
@@ -112,6 +113,7 @@ def register_coordination(app,db,current,role,audit,cipher):
         slot=session.get(Availability,b.slot_id)
         lock_users(session,b.elder_id,slot.caregiver_id);session.refresh(b)
         if b.slot_id!=slot.id: raise HTTPException(409,'일정이 변경됐습니다. 새로고침하세요.')
+        require_team(session,slot.caregiver_id,user.id)
         coord=session.get(Coordination,b.id)
         if coord and coord.worker_id!=user.id: raise HTTPException(403,'다른 사회복지사가 관리하는 일정입니다.')
         if not coord:
@@ -119,7 +121,8 @@ def register_coordination(app,db,current,role,audit,cipher):
             coord=Coordination(booking_id=b.id,worker_id=user.id);session.add(coord)
         return b,slot,coord
 
-    def check_slot(session,slot,elder_id,exclude=None):
+    def check_slot(session,slot,elder_id,worker_id,exclude=None,ctx=None):
+        require_team(session,slot.caregiver_id,worker_id)
         if not slot_future(slot) or slot.state!='open': raise HTTPException(409,'선택할 수 없는 일정입니다.')
         for uid,expected in [(elder_id,'elder'),(slot.caregiver_id,'caregiver')]:
             actor=session.get(User,uid)
@@ -131,6 +134,7 @@ def register_coordination(app,db,current,role,audit,cipher):
             Availability.day==slot.day,Availability.start<slot.end,Availability.end>slot.start)
         if exclude: conflict=conflict.where(Booking.id!=exclude)
         if session.scalar(conflict): raise HTTPException(409,'이용자의 다른 일정과 겹칩니다.')
+        return routing.check(session,slot,elder_id,exclude,ctx)
 
     @app.get('/api/worker/statistics')
     def statistics(days:int=Query(7,ge=1,le=90),user=Depends(role('social_worker')),session=Depends(db)):
@@ -147,7 +151,7 @@ def register_coordination(app,db,current,role,audit,cipher):
 
     @app.get('/api/worker/schedules')
     def schedules(offset:int=Query(0,ge=0),user=Depends(role('social_worker')),session=Depends(db)):
-        rows=session.execute(select(Booking,Availability).join(Availability).order_by(Booking.created_at.desc()).offset(offset).limit(100))
+        rows=session.execute(select(Booking,Availability).join(Availability).outerjoin(Coordination,Coordination.booking_id==Booking.id).where(or_(Coordination.worker_id==user.id,Availability.caregiver_id.in_(select(CaregiverTeam.caregiver_id).where(CaregiverTeam.worker_id==user.id)))).order_by(Booking.created_at.desc()).offset(offset).limit(100))
         return [booking_data(session,b,s) for b,s in rows]
 
     @app.post('/api/worker/schedules/{bid}/claim')
@@ -163,6 +167,7 @@ def register_coordination(app,db,current,role,audit,cipher):
         for uid in [b.elder_id,slot.caregiver_id]:
             actor=session.get(User,uid);session.refresh(actor)
             if actor.status!='approved': raise HTTPException(409,'계정 상태를 확인하세요.')
+        routing.check(session,slot,b.elder_id,exclude=bid)
         offer(session,b,slot,stage_for(session,coord));audit(session,user,'coordinate_offer',bid);session.commit()
         return booking_data(session,b,slot)
 
@@ -174,7 +179,15 @@ def register_coordination(app,db,current,role,audit,cipher):
         region_set={(r.province,r.district) for r in regions}
         slots=session.scalars(select(Availability).join(User,User.id==Availability.caregiver_id).where(
             User.status=='approved',Availability.state=='open',Availability.day>=str(datetime.now(KST).date())).order_by(Availability.day,Availability.start))
-        return [slot_data(s) for s in slots if slot_future(s) and (s.province,s.district) in region_set][:100]
+        return [slot_data(s) for s in slots if managed(session,s.caregiver_id,user.id) and slot_future(s) and (s.province,s.district) in region_set][:100]
+
+    @app.post('/api/worker/route-check')
+    def route_check(body:Assign,user=Depends(role('social_worker')),session=Depends(db)):
+        care=session.get(Care,body.care_id);slot=session.get(Availability,body.slot_id)
+        if not care or care.worker_id!=user.id or not slot:raise HTTPException(404,'담당 요청과 일정을 확인하세요.')
+        require_team(session,slot.caregiver_id,user.id)
+        result=check_slot(session,slot,care.owner_id,user.id)
+        audit(session,user,'route_check',care.id);session.commit();return result
 
     @app.post('/api/worker/assign',status_code=201)
     def assign(body:Assign,user=Depends(role('social_worker')),session=Depends(db)):
@@ -184,7 +197,7 @@ def register_coordination(app,db,current,role,audit,cipher):
         lock_users(session,care.owner_id,slot.caregiver_id);session.refresh(slot);session.refresh(care)
         if care.review_required: raise HTTPException(409,'요청 분류를 먼저 검토해 주세요.')
         if session.scalar(select(Coordination.booking_id).where(Coordination.care_id==care.id)): raise HTTPException(409,'이미 연결된 요청입니다. 기존 일정에서 변경하세요.')
-        check_slot(session,slot,care.owner_id)
+        check_slot(session,slot,care.owner_id,user.id)
         b=Booking(id=str(uuid.uuid4()),slot_id=slot.id,elder_id=care.owner_id,category=care.category,status='offered')
         slot.state='reserved';session.add(b);session.flush()
         session.add(Coordination(booking_id=b.id,worker_id=user.id,care_id=care.id))
@@ -202,7 +215,7 @@ def register_coordination(app,db,current,role,audit,cipher):
         coord=session.get(Coordination,bid)
         if not coord or coord.worker_id!=user.id: raise HTTPException(403,'담당 일정만 변경할 수 있습니다.')
         if b.slot_id!=original or b.status not in ('pending','offered','accepted','declined'): raise HTTPException(409,'변경할 수 없는 일정입니다.')
-        check_slot(session,target,b.elder_id,exclude=bid)
+        check_slot(session,target,b.elder_id,user.id,exclude=bid)
         old.state='closed'  # Explicitly close the superseded slot; provider can publish a new one.
         target.state='reserved';b.slot_id=target.id
         offer(session,b,target,stage_for(session,coord))
@@ -213,7 +226,7 @@ def register_coordination(app,db,current,role,audit,cipher):
     def open_slots(user=Depends(role('social_worker')),session=Depends(db)):
         rows=session.scalars(select(Availability).join(User,User.id==Availability.caregiver_id).where(User.status=='approved',
             Availability.state=='open',Availability.day>=str(datetime.now(KST).date())).order_by(Availability.day,Availability.start))
-        return [slot_data(s) for s in rows if slot_future(s)][:200]
+        return [slot_data(s) for s in rows if managed(session,s.caregiver_id,user.id) and slot_future(s)][:200]
 
     @app.post('/api/worker/schedules/{bid}/cancel')
     def cancel(bid:str,user=Depends(role('social_worker')),session=Depends(db)):
@@ -248,6 +261,9 @@ def register_coordination(app,db,current,role,audit,cipher):
                 raise HTTPException(409,'수락할 수 없는 제안입니다.')
             elder=session.get(User,b.elder_id);session.refresh(elder)
             if elder.status!='approved': raise HTTPException(409,'이용자 계정 상태를 확인하세요.')
+            coord=session.get(Coordination,b.id)
+            if coord:require_team(session,user.id,coord.worker_id)
+            routing.check(session,slot,b.elder_id,exclude=b.id)
             b.status=p.status='accepted'
         else:
             if not body.reason: raise HTTPException(422,'조율을 위해 거절 사유를 남겨 주세요.')
@@ -267,17 +283,19 @@ def register_coordination(app,db,current,role,audit,cipher):
             .order_by(Care.created_at).limit(100)).all()
         slots=session.scalars(select(Availability).where(Availability.state=='open',Availability.day>=str(today),
             Availability.day<=str(until)).order_by(Availability.day,Availability.start,Availability.id)).all()
-        offered=[];skipped=[]
+        offered=[];skipped=[];ctx=routing.context()
         for care in cares:
             if care.urgency=='danger':
                 skipped.append({'care_id':care.id,'reason':'긴급 요청: 3차 직접 조율 필요'});continue
-            selected=None
+            selected=None;reason='담당 팀과 지역·시간에 맞는 빈 일정 없음'
             for slot in slots:
-                try: check_slot(session,slot,care.owner_id)
-                except HTTPException: continue
+                if not managed(session,slot.caregiver_id,user.id):continue
+                try: check_slot(session,slot,care.owner_id,user.id,ctx=ctx)
+                except HTTPException as exc:
+                    reason=exc.detail;continue
                 selected=slot;break
             if not selected:
-                skipped.append({'care_id':care.id,'reason':'지역·시간에 맞는 빈 일정 없음'});continue
+                skipped.append({'care_id':care.id,'reason':reason});continue
             b=Booking(id=str(uuid.uuid4()),slot_id=selected.id,elder_id=care.owner_id,category=care.category,status='offered')
             selected.state='reserved';session.add(b);session.flush()
             session.add(Coordination(booking_id=b.id,worker_id=user.id,care_id=care.id))

@@ -1,7 +1,7 @@
 import re
 from typing import Literal
 from cryptography.fernet import Fernet
-from pydantic import model_validator
+from pydantic import model_validator, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     local_model: Literal['qwen2.5:0.5b'] = 'qwen2.5:0.5b'
     local_model_url: str = 'http://127.0.0.1:11434'
     local_privacy_reviewed: bool = False
+    routing_enabled: bool = False
+    naver_maps_key_id: SecretStr = SecretStr('')
+    naver_maps_key: SecretStr = SecretStr('')
+    travel_buffer_minutes: int = Field(default=15,ge=0,le=120)
     speech_enabled: bool = False
     speech_model_path: str = './models/whisper-tiny'
     cors_origins: list[str] = ['http://localhost:3000']

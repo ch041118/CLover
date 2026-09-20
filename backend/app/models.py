@@ -127,3 +127,15 @@ class CareDecision(Base):
     edited: Mapped[bool] = mapped_column(Boolean, default=False)
     encrypted_handoff: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class CaregiverTeam(Base):
+    __tablename__ = 'caregiver_teams'
+    caregiver_id: Mapped[str] = mapped_column(ForeignKey('users.id'), primary_key=True)
+    worker_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+
+class RouteLocation(Base):
+    __tablename__ = 'route_locations'
+    owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), primary_key=True)
+    encrypted_point: Mapped[str] = mapped_column(Text)
+    consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    departure: Mapped[str] = mapped_column(String(5), default='08:00')

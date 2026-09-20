@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import Depends, HTTPException
 from pydantic import Field, field_validator, model_validator
 from sqlalchemy import select, update, delete
-from .models import User, Preference, ServiceRegion, Availability, Booking
+from .models import User, Preference, ServiceRegion, Availability, Booking, CaregiverTeam
 from .schemas import StrictModel, Category
 
 PROVINCES = ['서울특별시','부산광역시','대구광역시','인천광역시','광주광역시','대전광역시','울산광역시','세종특별자치시','경기도','강원특별자치도','충청북도','충청남도','전북특별자치도','전라남도','경상북도','경상남도','제주특별자치도']
@@ -141,7 +141,7 @@ def register_matching(app, db, current, role, audit):
             User.status=='approved',User.role=='caregiver',Availability.state=='open',Availability.day==str(body.day),
             Availability.province==body.region.province,Availability.district==body.region.district,
             Availability.start>=body.start,Availability.end<=body.end).order_by(Availability.start).limit(100))
-        return [slot_view(r) for r in slots if slot_future(r)]
+        return [slot_view(r) for r in slots if slot_future(r) and session.get(CaregiverTeam,r.caregiver_id)]
 
     @app.post('/api/bookings',status_code=201)
     def book(body: Book,user=Depends(role('elder')),session=Depends(db)):
@@ -156,6 +156,11 @@ def register_matching(app, db, current, role, audit):
         conflict=session.scalar(select(Booking.id).join(Availability).where(Booking.elder_id==user.id,
             Booking.status.in_(['pending','offered','accepted','in_progress']),Availability.day==slot.day,Availability.start<slot.end,Availability.end>slot.start))
         if conflict: raise HTTPException(409,'신청한 시간과 겹칩니다.')
+        team=session.get(CaregiverTeam,cg.id)
+        if not team:raise HTTPException(409,'담당 사회복지사 연결이 필요합니다.')
+        from .teams import require_team
+        require_team(session,cg.id,team.worker_id)
+        app.state.routing.check(session,slot,user.id)
         row=Booking(id=str(uuid.uuid4()),slot_id=slot.id,elder_id=user.id,category=body.category.value)
         slot.state='reserved';session.add(row);audit(session,user,'request_booking',row.id);session.commit()
         return {'id':row.id,'status':row.status}

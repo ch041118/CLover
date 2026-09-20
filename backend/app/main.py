@@ -21,13 +21,15 @@ from .classifier import Classifier
 from .general_ai import GeneralAI, GeneralUnavailable, template_result
 from .matching import register_matching
 from .coordination import register_coordination, update_repeat
+from .teams import register_teams
+from .routing import Routing, register_locations
 from .desk import register_desk, prepare_packet, record_decision
 from .speech import Speech, SpeechInput, SpeechUnavailable, SpeechInvalid, suggested_category
 
 passwords = PasswordHash.recommended()
 bearer = HTTPBearer(auto_error=False)
 
-def create_app(settings=None, classifier=None, general_ai=None, speech=None):
+def create_app(settings=None, classifier=None, general_ai=None, speech=None, routing=None):
     settings = settings or Settings()
     engine = create_engine(settings.database_url, **({'connect_args': {'check_same_thread': False}} if settings.database_url.startswith('sqlite:') else {}))
     factory = sessionmaker(engine, expire_on_commit=False)
@@ -35,6 +37,7 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None):
     classifier = classifier or Classifier(settings)
     general_ai = general_ai or GeneralAI(settings)
     speech = speech or Speech(settings)
+    routing = routing or Routing(settings,cipher)
     dummy_hash = passwords.hash(uuid.uuid4().hex)
 
     @asynccontextmanager
@@ -48,6 +51,7 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None):
     app = FastAPI(title='CLover 생활 돌봄', lifespan=lifespan,
                   docs_url='/docs' if settings.app_env == 'development' else None,
                   redoc_url=None, openapi_url='/openapi.json' if settings.app_env == 'development' else None)
+    app.state.routing = routing
     app.state.factory = factory
     app.state.engine = engine
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
@@ -291,7 +295,9 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None):
         audit(session,user,'transcribe','local');session.commit()
         return {'text':text,'category':suggested_category(text)}
 
+    register_teams(app,db,role,audit,cipher)
+    register_locations(app,db,role,audit,cipher)
     register_desk(app, db, role, audit, cipher)
     register_matching(app, db, current, role, audit)
-    register_coordination(app, db, current, role, audit, cipher)
+    register_coordination(app, db, current, role, audit, cipher, routing)
     return app

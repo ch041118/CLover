@@ -13,6 +13,7 @@ def prepare(c):
     h={name:auth(c,name) for name in ['elder1','elder2','caregiver','worker1','admin']}
     for name in ['elder1','elder2','caregiver']:
         assert c.post('/api/regions',headers=h[name],json={'regions':[REGION]}).status_code==200
+    assert c.post('/api/admin/teams',headers=h['admin'],json={'caregiver_id':'caregiver','worker_id':'worker1'}).status_code==200
     return h
 
 def slot(c,h,start='09:00',end='10:00'):
