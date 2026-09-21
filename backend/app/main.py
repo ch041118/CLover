@@ -21,6 +21,7 @@ from .classifier import Classifier
 from .general_ai import GeneralAI, GeneralUnavailable, template_result
 from .matching import register_matching
 from .coordination import register_coordination, update_repeat
+from .checkin import register_checkin
 from .teams import register_teams
 from .routing import Routing, register_locations
 from .desk import register_desk, prepare_packet, record_decision
@@ -68,7 +69,7 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None, rou
     @app.middleware('http')
     async def security_headers(request: Request, call_next):
         # Deployment proxy must also enforce size and rate limits, including chunked requests.
-        limit = 2_900_000 if request.url.path == '/api/speech/transcribe' else 32768
+        limit = 2_900_000 if request.url.path in ('/api/speech/transcribe','/api/checkin/respond') else 32768
         if request.headers.get('content-length', '').isdigit() and int(request.headers['content-length']) > limit:
             return JSONResponse(status_code=413, content={'detail': '요청이 너무 큽니다.'})
         if request.method in ('POST', 'PUT', 'PATCH'):
@@ -295,6 +296,7 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None, rou
         audit(session,user,'transcribe','local');session.commit()
         return {'text':text,'category':suggested_category(text)}
 
+    register_checkin(app,db,role,audit,speech)
     register_teams(app,db,role,audit,cipher)
     register_locations(app,db,role,audit,cipher)
     register_desk(app, db, role, audit, cipher)

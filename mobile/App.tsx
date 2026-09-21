@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { AppState, KeyboardAvoidingView, Platform, Pressable, ScrollView, StatusBar, Text, View } from 'react-native';
 import { ApiClient, resolveBaseUrl } from './src/api';
 import { Care, Category, Role, User, Urgency, categories, roles, urgencies } from './src/types';
@@ -10,6 +10,8 @@ import { WorkerStatistics, WorkerSchedules, RepeatInbox, RequestScheduler } from
 import {Teams,LocationSettings,OperationHistory} from './src/components/Operations';
 import { WorkerDesk } from './src/components/WorkerDesk';
 import { CaregiverVisits } from './src/components/CaregiverVisits';
+import {say,stopSpeaking,receiptText} from './src/speaking';
+import {VoiceCheckin} from './src/components/VoiceCheckin';
 import { VoiceRequest } from './src/components/VoiceRequest';
 
 function Auth({ api, onLogin }: { api: ApiClient; onLogin: (user: User) => void }) {
@@ -31,7 +33,8 @@ function Auth({ api, onLogin }: { api: ApiClient; onLogin: (user: User) => void 
 }
 function NewRequest({ api, onDone }: { api: ApiClient; onDone: () => void }) {
   const [category, setCategory] = useState<Category>('meal'), [note, setNote] = useState(''), [signals, setSignals] = useState<string[]>([]), [urgent, setUrgent] = useState(false), [voiceBusy, setVoiceBusy] = useState(false);
-  const task = useTask();
+  const task = useTask();const activeRequest=useRef(true);
+  useEffect(()=>{activeRequest.current=true;const listener=AppState.addEventListener('change',state=>{if(state!=='active')void stopSpeaking();});return()=>{activeRequest.current=false;listener.remove();void stopSpeaking();};},[]);
   const choices: Record<string, string> = { meal_preparation: '식사 준비', walk_companion: '산책·외출 동행', light_housework: '가벼운 집안일', shopping_help: '장보기 도움', conversation: '이야기 나누기', medication_reminder: '약 시간 챙기기', ...(urgent ? { breathing_difficulty: '숨쉬기 어려움', unconscious: '의식 없음', severe_bleeding: '심한 출혈', fall: '넘어짐', missed_meal: '식사를 못함', missed_medication: '약을 못 먹음' } : {}) };
   return <><VoiceRequest api={api} onDone={onDone} onBusy={setVoiceBusy} /><Card><Text style={s.heading}>어떤 도움이 필요한가요?</Text><Chips options={categories} value={category} select={setCategory} />
     <Text style={s.label}>오늘 필요한 도움 (편하게 골라 주세요)</Text><View style={s.wrap}>{Object.entries(choices).map(([key, label]) => <Pressable key={key} accessibilityRole="checkbox" accessibilityState={{ checked: signals.includes(key) }} onPress={() => setSignals(signals.includes(key) ? signals.filter(x => x !== key) : [...signals, key])} style={[s.chip, signals.includes(key) && s.chipOn]}><Text style={[s.chipText, signals.includes(key) && { color: '#fff' }]}>{label}</Text></Pressable>)}</View>
@@ -41,12 +44,13 @@ function NewRequest({ api, onDone }: { api: ApiClient; onDone: () => void }) {
     <Button disabled={task.busy || voiceBusy || !note.trim()} title={task.busy ? '접수 중…' : '도움 요청 보내기'} onPress={() => task.run(async () => {
       const row = await api.request<Care>('/api/care-requests', { note, features: { category, signals, duration: 'unknown', can_self_manage: false } });
       setNote(''); setSignals([]); task.setMessage(row.emergency_notice || '접수되었습니다. 담당자가 확인합니다.');
+      if(activeRequest.current&&!api.closed&&AppState.currentState==='active'){const played=await say(receiptText(row.emergency_notice));if(!played)task.setMessage('접수는 완료됐습니다. 음성 안내는 재생하지 못했습니다.');}
     })} /><Button secondary title="내 요청 보기" onPress={onDone} /><Notice text={task.message} />
   </Card></>;
 }
 function Home({ api, navigate }: { api: ApiClient; navigate: (tab: string) => void }) {
   const task = useTask(); const [patterns, setPatterns] = useState<{ category: Category; count: number; suggestion: string }[]>([]);
-  return <><Card><Text style={s.kicker}>나의 생활 돌봄</Text><Text style={s.heading}>어떤 도움이 필요하세요?</Text><Text style={s.body}>필요한 도움을 요청하거나 내 지역의 돌봄 일정을 찾아보세요.</Text>
+  return <><VoiceCheckin api={api} onHelp={()=>navigate('request')}/><Card><Text style={s.kicker}>나의 생활 돌봄</Text><Text style={s.heading}>어떤 도움이 필요하세요?</Text><Text style={s.body}>필요한 도움을 요청하거나 내 지역의 돌봄 일정을 찾아보세요.</Text>
     <Button title="말로 또는 글로 도움 요청" onPress={() => navigate('request')} />
     <Button secondary title="내 지역에서 돌봄 일정 찾기" onPress={() => navigate('match')} />
     <Button secondary disabled={task.busy} title="반복 요청 안내 확인" onPress={() => task.run(async () => { const rows = await api.request<typeof patterns>('/api/patterns'); setPatterns(rows); if (!rows.length) task.setMessage('최근 반복 요청 안내가 없습니다.'); })} /><Notice text={task.message} />

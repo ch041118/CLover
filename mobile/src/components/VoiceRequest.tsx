@@ -5,6 +5,7 @@ import { File } from 'expo-file-system';
 import { ApiClient } from '../api';
 import { Care, Category } from '../types';
 import { Button, Card, Notice, s } from '../ui';
+import {say,stopSpeaking,receiptText} from '../speaking';
 import { voiceDecision } from '../voice';
 
 type Transcript = { text: string; category: Category };
@@ -15,7 +16,7 @@ export function VoiceRequest({ api, onDone, onBusy }: { api: ApiClient; onDone: 
   const cleanFile=(uri:string|null)=>{if(uri){try {const f=new File(uri);if(f.exists)f.delete();}catch{ /* OS may have already removed cache */ }}};
   useEffect(()=>{
     alive.current=true;
-    const cancel=()=>{epoch.current++;if(timer.current)clearTimeout(timer.current);timer.current=null;
+    const cancel=()=>{epoch.current++;void stopSpeaking();if(timer.current)clearTimeout(timer.current);timer.current=null;
       void recorder.stop().catch(()=>{}).finally(()=>{cleanFile(recorder.uri);locked.current=false;if(alive.current){setBusy(false);setRecording(false);onBusy(false);}});
     };
     const listener=AppState.addEventListener('change',state=>{if(state!=='active'){cancel();setMessage('녹음이 중단되었습니다. 다시 시작해 주세요.');}});
@@ -52,7 +53,7 @@ export function VoiceRequest({ api, onDone, onBusy }: { api: ApiClient; onDone: 
       if(decision==='cancel'){setDraft(null);setMessage('접수하지 않고 취소했습니다.');return;}
       if(decision!=='submit'||!draft){setMessage('접수하지 않았습니다. “접수해 주세요” 또는 “취소해 주세요”로 다시 확인해 주세요.');return;}
       const row=await api.request<Care>('/api/care-requests',{note:draft.text,features:{category:draft.category,signals:[],duration:'unknown',can_self_manage:false}});
-      if(current()){setDraft(null);setMessage(row.emergency_notice||'말씀하신 내용을 접수했습니다. 담당자가 확인합니다.');}
+      if(current()){setDraft(null);setMessage(row.emergency_notice||'말씀하신 내용을 접수했습니다. 담당자가 확인합니다.');const played=await say(receiptText(row.emergency_notice));if(current()&&!played)setMessage('접수는 완료됐습니다. 음성 안내는 재생하지 못했습니다.');}
     }catch(error){if(current())setMessage(error instanceof Error?error.message:'음성을 처리하지 못했습니다. 글로 접수하거나 다시 녹음해 주세요.');}
     finally{cleanFile(uri);if(current()){setBusy(false);setRecording(false);onBusy(false);locked.current=false;}}
   }

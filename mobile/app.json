@@ -15,7 +15,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "필요한 도움을 말로 접수하기 위해 마이크를 사용합니다.",
+          "microphonePermission": "도움 요청과 동의한 자동 음성 안부 확인을 위해 마이크를 사용합니다.",
           "enableBackgroundRecording": false,
           "enableBackgroundPlayback": false
         }

@@ -139,3 +139,19 @@ class RouteLocation(Base):
     encrypted_point: Mapped[str] = mapped_column(Text)
     consent: Mapped[bool] = mapped_column(Boolean, default=False)
     departure: Mapped[str] = mapped_column(String(5), default='08:00')
+
+class CheckinPreference(Base):
+    __tablename__ = 'checkin_preferences'
+    owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+class CheckinDay(Base):
+    __tablename__ = 'checkin_days'
+    __table_args__ = (UniqueConstraint('owner_id','day'),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    day: Mapped[str] = mapped_column(String(10))
+    attempts: Mapped[int] = mapped_column(default=0)
+    state: Mapped[str] = mapped_column(String(20), default='waiting')
+    token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    next_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
