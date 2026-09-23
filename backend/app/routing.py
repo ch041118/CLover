@@ -8,6 +8,7 @@ from sqlalchemy import select
 from .schemas import StrictModel
 from .models import RouteLocation,Booking,Availability
 from .matching import KST
+from .map_usage import MapUsage
 
 class Point(StrictModel):
     longitude:float=Field(ge=-180,le=180,allow_inf_nan=False)
@@ -21,10 +22,14 @@ class Address(StrictModel):
     consent:bool=False
 
 class Routing:
-    def __init__(self,settings,cipher,transport=None):self.settings=settings;self.cipher=cipher;self.transport=transport
+    def __init__(self,settings,cipher,transport=None):
+        self.settings=settings;self.cipher=cipher;self.transport=transport
+        self.usage=MapUsage(settings,cipher)
     def context(self):return {'cache':{},'calls':0,'deadline':time.monotonic()+12}
     def get(self,path,params,ctx):
         if not self.settings.routing_enabled or not self.settings.naver_maps_key_id.get_secret_value() or not self.settings.naver_maps_key.get_secret_value():raise HTTPException(409,'네이버 지도 API 설정이 필요합니다.')
+        return self.usage.run(path,params,lambda:self.fetch(path,params,ctx))
+    def fetch(self,path,params,ctx):
         if ctx['calls']>=12 or time.monotonic()>ctx['deadline']:raise HTTPException(409,'경로 조회 한도에 도달했습니다. 후보를 좁혀 다시 확인하세요.')
         ctx['calls']+=1
         try:
@@ -34,8 +39,20 @@ class Routing:
                     for part in resp.iter_bytes():
                         raw.extend(part)
                         if len(raw)>1_000_000:raise ValueError()
-            return json.loads(raw)
-        except (httpx.HTTPError,ValueError,TypeError):raise HTTPException(409,'지도 경로를 확인할 수 없습니다. 설정·응답을 확인하고 다시 시도하세요.') from None
+            data=json.loads(raw)
+            # Keep only validated data needed by this app, never route geometry or raw provider errors.
+            if path=='/map-geocode/v2/geocode':
+                if data.get('status','OK')!='OK':raise ValueError()
+                rows=[]
+                for x in data['addresses'][:5]:
+                    point=Point(longitude=float(x['x']),latitude=float(x['y']),label=x.get('roadAddress') or x['jibunAddress'])
+                    if not point.label.strip():raise ValueError()
+                    rows.append({'roadAddress':point.label,'x':str(point.longitude),'y':str(point.latitude)})
+                return {'addresses':rows}
+            duration=data['route']['traoptimal'][0]['summary']['duration']
+            if data['code']!=0 or not isinstance(duration,(int,float)) or not math.isfinite(duration) or duration<0:raise ValueError()
+            return {'code':0,'route':{'traoptimal':[{'summary':{'duration':duration}}]}}
+        except (httpx.HTTPError,ValueError,TypeError,KeyError,IndexError,AttributeError):raise HTTPException(409,'지도 경로를 확인할 수 없습니다. 설정·응답을 확인하고 다시 시도하세요.') from None
     def point(self,session,uid):
         loc=session.get(RouteLocation,uid)
         if not loc or not loc.consent:raise HTTPException(409,'연결 당사자와 인접 방문 이용자의 위치·지도 전송 동의가 필요합니다.')
@@ -76,6 +93,10 @@ class Routing:
 
 
 def register_locations(app,db,role,audit,cipher):
+    @app.get('/api/admin/maps-usage')
+    def maps_usage(user=Depends(role('admin'))):
+        return app.state.routing.usage.stats()
+
     @app.get('/api/location/status')
     def location_status(user=Depends(role('elder','caregiver'))):
         settings=app.state.routing.settings
@@ -103,7 +124,7 @@ def register_locations(app,db,role,audit,cipher):
     @app.post('/api/location/search')
     def search(body:Address,user=Depends(role('elder','caregiver')),session=Depends(db)):
         if not body.consent:raise HTTPException(422,'주소를 네이버 지도에 전송하는 데 동의해 주세요.')
-        data=app.state.routing.get('/map-geocode/v2/geocode',{'query':body.query},app.state.routing.context())
+        data=app.state.routing.get('/map-geocode/v2/geocode',{'query':' '.join(body.query.split())},app.state.routing.context())
         try:
             if data.get('status','OK')!='OK':raise ValueError()
             rows=[]

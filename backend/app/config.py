@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     naver_maps_key_id: SecretStr = SecretStr('')
     naver_maps_key: SecretStr = SecretStr('')
     travel_buffer_minutes: int = Field(default=15,ge=0,le=120)
+    maps_cache_allowed: bool = False
+    maps_address_cache_seconds: int = Field(default=86400,ge=0,le=2592000)
+    maps_route_cache_seconds: int = Field(default=300,ge=0,le=1800)
+    maps_daily_call_limit: int = Field(default=2000,ge=1,le=1000000)
+    maps_usage_path: str = './maps-usage.sqlite3'
     speech_enabled: bool = False
     speech_model_path: str = './models/whisper-tiny'
     cors_origins: list[str] = ['http://localhost:3000']

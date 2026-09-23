@@ -73,3 +73,15 @@ export function OperationHistory({api}:{api:ApiClient}){
  {data.rows.map(row=><Card key={row.id}><Text style={s.label}>{row.day} {row.start}–{row.end} · {states[row.status]}</Text><Text style={s.body}>{row.elder_id} ↔ {row.caregiver_id} · {categories[row.category]}{'\n'}조율 담당 {row.worker_id||'미지정'}</Text><Button secondary disabled={task.busy} title="전달문·수행 기록·제안 이력" onPress={()=>task.run(async()=>{setDetail(null);setSelected(row.id);setDetail(await api.request('/api/operations/history/'+row.id));})}/>
  {selected===row.id&&detail&&<><Text style={s.label}>승인 전달문</Text><Text style={s.body}>{detail.handoff||'기록 없음'}</Text><Text style={s.label}>수행 결과</Text><Text style={s.body}>{detail.outcome||'아직 보고 없음'} · {detail.recorded_at||''}{'\n'}{detail.report}</Text>{detail.proposals.map((p,i)=><Text key={i} style={s.body}>{stages[p.stage]} · {states[p.status]||p.status} · {p.caregiver_id}{'\n'}{p.created_at}{p.reason?' · '+p.reason:''}</Text>)}</>}</Card>)}</>;
 }
+
+export function MapUsagePanel({api}:{api:ApiClient}){
+ const [data,setData]=useState<{today:string;daily_limit:number;cache_enabled:boolean;rows:{day:string;kind:string;api_attempts:number;reused:number}[]}|null>(null);const task=useTask();
+ const load=()=>task.run(async()=>setData(await api.request('/api/admin/maps-usage')));
+ useEffect(()=>{void load();},[api]);
+ return <Card><Text style={s.heading}>지도 API 사용 기록</Text><Button secondary disabled={task.busy} title="사용량 새로고침" onPress={load}/>
+ {data&&<><Text style={s.body}>오늘 호출 시도 {data.rows.filter(x=>x.day===data.today).reduce((n,x)=>n+x.api_attempts,0)} / {data.daily_limit}회</Text>
+ <Text style={s.caption}>서버 기준 호출 시도이며 네이버 청구 건수와 다를 수 있습니다. 실패한 요청도 포함합니다. 하루 한도는 한국 시간 자정에 초기화됩니다.</Text>
+ <Text style={s.body}>결과 재사용: {data.cache_enabled?'켜짐':'꺼짐 · 제공자 허용 조건 확인 후 서버에서 설정'}</Text>
+ {data.rows.slice(0,14).map(x=><Text key={x.day+x.kind} style={s.body}>{x.day} · {x.kind==='address'?'주소 검색':'자동차 이동'}: 호출 {x.api_attempts}회 / 재사용 {x.reused}회</Text>)}</>}
+ <Notice text={task.message}/></Card>;
+}

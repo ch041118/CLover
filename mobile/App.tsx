@@ -7,7 +7,7 @@ import { Button, Card, Field, Chips, useTask, Notice, colors, s } from './src/ui
 import { SettingsScreen, ConsentGate } from './src/components/SettingsScreen';
 import { MatchingScreen } from './src/components/MatchingScreen';
 import { WorkerStatistics, WorkerSchedules, RepeatInbox, RequestScheduler } from './src/components/WorkerConsole';
-import {Teams,LocationSettings,OperationHistory} from './src/components/Operations';
+import {Teams,LocationSettings,OperationHistory,MapUsagePanel} from './src/components/Operations';
 import { WorkerDesk } from './src/components/WorkerDesk';
 import { CaregiverVisits } from './src/components/CaregiverVisits';
 import {say,stopSpeaking,receiptText} from './src/speaking';
@@ -111,7 +111,7 @@ function Session({ baseUrl }: { baseUrl: string }) {
         {user.role === 'social_worker' && tab === 'schedules' && <WorkerSchedules api={api} userId={user.id} />}
         {user.role === 'social_worker' && tab === 'repeats' && <RepeatInbox api={api} userId={user.id} />}
         {user.role === 'caregiver' && tab === 'home' && <CaregiverVisits api={api} />}
-        {tab === 'settings' && <><SettingsScreen api={api}/>{['elder','caregiver'].includes(user.role)&&<LocationSettings api={api} caregiver={user.role==='caregiver'}/>}</>}
+        {tab === 'settings' && <><SettingsScreen api={api}/>{user.role==='admin'&&<MapUsagePanel api={api}/>}{['elder','caregiver'].includes(user.role)&&<LocationSettings api={api} caregiver={user.role==='caregiver'}/>}</>}
         {tab==='team'&&['admin','social_worker','caregiver'].includes(user.role)&&<Teams api={api} admin={user.role==='admin'}/>}
         {tab==='history'&&['admin','social_worker'].includes(user.role)&&<OperationHistory api={api}/>} 
         {((user.role === 'elder' && tab === 'match') || (user.role === 'caregiver' && tab === 'availability')) && <MatchingScreen api={api} caregiver={user.role === 'caregiver'} />}

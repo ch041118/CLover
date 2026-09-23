@@ -122,3 +122,18 @@ def test_invalid_geocode_is_not_a_selectable_address(api,data):
     c,app=api;h=prepare(c);setup_routes(c,app,h)
     app.state.routing.transport=httpx.MockTransport(lambda r:httpx.Response(200,json=data))
     assert c.post('/api/location/search',headers=h['elder1'],json={'query':'테스트로 10','consent':True}).status_code==409
+
+
+def test_geocode_cache_consent_usage_and_budget(api):
+    c,app=api;h=prepare(c);calls=setup_routes(c,app,h)
+    app.state.routing.settings.maps_cache_allowed=True
+    app.state.routing.settings.maps_daily_call_limit=1
+    for query in ['서울 테스트로',' 서울   테스트로 ']:
+        assert c.post('/api/location/search',headers=h['elder1'],json={'query':query,'consent':True}).status_code==200
+    assert len(calls)==1
+    assert c.post('/api/location/search',headers=h['elder1'],json={'query':'서울 테스트로','consent':False}).status_code==422
+    assert c.post('/api/location/search',headers=h['elder1'],json={'query':'부산 테스트로','consent':True}).status_code==429
+    assert c.get('/api/admin/maps-usage',headers=h['elder1']).status_code==403
+    stats=c.get('/api/admin/maps-usage',headers=h['admin']).json()
+    assert stats['rows'][0]['api_attempts']==1 and stats['rows'][0]['reused']==1
+    assert '서울' not in str(stats) and 'test-key' not in str(stats)
