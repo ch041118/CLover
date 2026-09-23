@@ -1,5 +1,5 @@
-import React,{useEffect,useState} from 'react';
-import {Switch,Text,View} from 'react-native';
+import React,{useEffect,useRef,useState} from 'react';
+import {Keyboard,Switch,Text,View} from 'react-native';
 import {ApiClient} from '../api';
 import {Button,Card,Chips,Field,Notice,s,useTask} from '../ui';
 import {states,stages} from './WorkerConsole';
@@ -17,18 +17,48 @@ export function Teams({api,admin=false}:{api:ApiClient;admin?:boolean}){
  <Button secondary disabled={!cg||task.busy} title="선택한 요양보호사 연결 해제" onPress={()=>task.run(async()=>{await api.request('/api/admin/teams',{caregiver_id:cg,worker_id:null});await load();})}/><Text style={s.caption}>진행 중인 일정이 있으면 먼저 완료·취소한 뒤 담당자를 변경하세요.</Text></>}
  <Notice text={task.message}/></Card>;
 }
-type Point={longitude:number;latitude:number;consent:boolean;departure:string};
+type Point={longitude:number;latitude:number;consent:boolean;departure:string;label?:string};
+type AddressResult=Pick<Point,'longitude'|'latitude'>&{label:string};
 export function LocationSettings({api,caregiver}:{api:ApiClient;caregiver:boolean}){
- const [query,setQuery]=useState(''),[consent,setConsent]=useState(false),[lng,setLng]=useState(''),[lat,setLat]=useState(''),[departure,setDeparture]=useState('08:00'),[results,setResults]=useState<(Point&{label:string})[]>([]);const task=useTask();
- useEffect(()=>{task.run(async()=>{const p=await api.request<Point|null>('/api/location');if(p){setLng(String(p.longitude));setLat(String(p.latitude));setConsent(p.consent);setDeparture(p.departure);}});},[api]);
- return <Card><Text style={s.heading}>{caregiver?'이동 출발지 설정':'돌봄 방문지 설정'}</Text><Text style={s.body}>주소 검색은 네이버 지도에 주소를, 이동 시간 계산은 관련 출발·도착 좌표를 전송합니다. 상담·건강 기록은 보내지 않습니다. 현재 자동차 이동만 지원합니다.</Text>
- <View style={s.switchRow}><Switch value={consent} onValueChange={setConsent} accessibilityLabel="네이버 지도 위치 전송 동의"/><Text style={[s.body,{flex:1}]}>주소·좌표를 지도 서비스로 전송하는 데 동의합니다.</Text></View>
- <Field label="도로명 주소 · 동호수 제외" value={query} onChange={setQuery} maxLength={200}/><Button disabled={!consent||query.trim().length<2||task.busy} title="주소로 위치 찾기" onPress={()=>task.run(async()=>{const r=await api.request<typeof results>('/api/location/search',{query,consent});setResults(r);if(!r.length)task.setMessage('검색된 주소가 없습니다.');})}/>
- {results.map((x,i)=><Button secondary key={i} title={x.label} onPress={()=>{setLng(String(x.longitude));setLat(String(x.latitude));setResults([]);}}/>)}
- <Field label="경도" value={lng} onChange={setLng} maxLength={20}/><Field label="위도" value={lat} onChange={setLat} maxLength={20}/>
+ const [query,setQuery]=useState(''),[consent,setConsent]=useState(false),[departure,setDeparture]=useState('08:00');
+ const [saved,setSaved]=useState<Point|null>(null),[selected,setSelected]=useState<AddressResult|null>(null),[results,setResults]=useState<AddressResult[]>([]);
+ const [configured,setConfigured]=useState<boolean|null>(null),[searching,setSearching]=useState(false);const task=useTask();const revision=useRef(0);
+ const load=()=>task.run(async()=>{const [p,status]=await Promise.all([api.request<Point|null>('/api/location'),api.request<{configured:boolean}>('/api/location/status')]);setConfigured(status.configured);setSaved(p);if(p){setConsent(p.consent);setDeparture(p.departure);}});
+ useEffect(()=>{void load();return()=>{revision.current++;};},[api]);
+ const edit=(value:string)=>{revision.current++;setQuery(value);setSelected(null);setResults([]);task.setMessage('');};
+ const changeConsent=(value:boolean)=>{revision.current++;setConsent(value);setResults([]);setSelected(null);task.setMessage(value?'주소를 입력하고 주소 검색을 눌러 주세요.':'지도 전송을 중단하려면 아래 동의 설정 저장을 눌러 주세요.');};
+ const search=()=>task.run(async()=>{
+  Keyboard.dismiss();setResults([]);setSelected(null);
+  if(!consent){task.setMessage('주소 검색을 위해 위의 지도 전송 동의를 켜 주세요.');return;}
+  if(!configured){task.setMessage('기관에서 네이버 주소 검색을 아직 설정하지 않았습니다. 담당자에게 지도 서비스 설정을 요청해 주세요.');return;}
+  if(query.trim().length<2){task.setMessage('도로명과 건물 번호를 입력해 주세요. 예: 부산광역시 연제구 중앙대로 1001');return;}
+  const id=++revision.current;setSearching(true);
+  try{const rows=await api.request<AddressResult[]>('/api/location/search',{query:query.trim(),consent:true});if(id!==revision.current)return;setResults(rows);task.setMessage(rows.length?'검색된 주소 중 방문할 곳을 선택해 주세요.':'검색 결과가 없습니다. 시·군·구, 도로명, 건물 번호를 확인해 주세요.');}
+  finally{setSearching(false);}
+ });
+ const save=()=>task.run(async()=>{
+  const point=selected||saved;if(!point){task.setMessage('주소를 검색하고 결과를 선택해 주세요.');return;}
+  if(query.trim()&&!selected){task.setMessage('입력한 주소를 검색하고 결과를 선택한 뒤 저장해 주세요.');return;}
+  const body={...point,departure,consent};await api.request('/api/location',body);setSaved(body);setSelected(null);setQuery('');setResults([]);task.setMessage('주소와 설정을 저장했습니다.');
+ });
+ return <Card><Text style={s.heading}>{caregiver?'이동 출발지 설정':'돌봄 방문지 설정'}</Text>
+ <Text style={s.body}>도로명 주소를 검색하고 결과를 선택한 뒤 저장하세요. 이동 시간 계산에 필요한 위치는 자동으로 연결합니다.</Text>
+ <Text style={s.label}>{saved?`저장된 주소: ${saved.label||'기존 등록 위치 · 주소를 다시 검색하면 주소명도 저장됩니다.'}`:'아직 저장된 주소가 없습니다.'}</Text>
+ {configured===false&&<Notice text="기관의 주소 검색 설정이 필요합니다. 담당자가 네이버 지도 연동을 설정하면 검색할 수 있습니다."/>}
+ {configured!==true&&<Button secondary disabled={task.busy} title="주소 설정 다시 불러오기" onPress={load}/>}
+ <Text style={s.caption}>주소 검색 시 주소를, 자동차 이동 시간 계산 시 출발·도착 좌표를 네이버 지도에 전송합니다. 상담·건강 기록은 보내지 않습니다.</Text>
+ <View style={s.switchRow}><Switch disabled={task.busy} value={consent} onValueChange={changeConsent} accessibilityLabel="네이버 지도 위치 전송 동의"/><Text style={[s.body,{flex:1}]}>지도 서비스에 주소·위치를 전송하는 데 동의합니다.</Text></View>
+ {!consent&&<Text style={s.caption}>주소 검색을 이용하려면 위 동의를 켜 주세요.</Text>}
+ <Field label="도로명 주소와 건물 번호 · 동호수 제외" value={query} onChange={edit} maxLength={200}/>
+ <Button disabled={task.busy} title={searching?'주소를 검색하고 있습니다…':'주소 검색'} onPress={search}/>
+ <Notice text={task.message}/>
+ {results.map((x,i)=><Button disabled={task.busy} secondary key={i} title={x.label+' · 이 주소 선택'} onPress={()=>{setSelected(x);setResults([]);task.setMessage('선택한 주소가 맞으면 아래 주소 저장을 눌러 주세요.');}}/>)}
+ {selected&&<Text style={s.label}>선택한 주소: {selected.label}</Text>}
  {caregiver&&<Field label="매일 출발 가능한 시각 (HH:MM)" value={departure} onChange={setDeparture} maxLength={5}/>}
- <Button disabled={!lng.trim()||!lat.trim()||!Number.isFinite(Number(lng))||!Number.isFinite(Number(lat))||task.busy} title="위치·동의 설정 저장" onPress={()=>task.run(async()=>{await api.request('/api/location',{longitude:Number(lng),latitude:Number(lat),departure,consent});task.setMessage('저장했습니다. 지역 등록과 근무 가능 시간도 확인해 주세요.');})}/>
- <Notice text={task.message}/></Card>;
+ <Button disabled={task.busy} title="주소 저장" onPress={save}/>
+ {saved&&<Button secondary disabled={task.busy} title="현재 저장된 위치의 동의 설정 저장" onPress={()=>task.run(async()=>{const body={...saved,consent};await api.request('/api/location',body);setSaved(body);task.setMessage(consent?'지도 전송 동의를 저장했습니다.':'지도 전송 동의를 철회했습니다.');})}/>}
+ <Text style={s.caption}>활동 지역과 근무 가능 시간은 별도로 등록해 주세요.</Text>
+ </Card>;
 }
 type RecordRow={id:string;elder_id:string;caregiver_id:string;worker_id:string|null;day:string;start:string;end:string;category:Category;status:string};
 type Detail={handoff:string|null;outcome:string|null;report:string|null;recorded_at:string|null;proposals:{stage:string;status:string;caregiver_id:string;created_at:string;reason:string|null}[]};

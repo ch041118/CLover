@@ -90,3 +90,35 @@ def test_next_visit_gap_and_geocode_consent(api):
     # Consent can always be withdrawn, even with a pending booking.
     assert c.post('/api/location',headers=h['elder2'],json={'longitude':127.01,'latitude':37.5,'consent':False,'departure':'08:00'}).status_code==200
     assert c.post('/api/worker/route-check',headers=h['worker1'],json={'care_id':cid,'slot_id':sid}).status_code==409
+
+
+def test_location_readiness_and_address_label_compatibility(api):
+    c,app=api;h=prepare(c)
+    assert c.get('/api/location/status',headers=h['elder1']).json()=={'configured':False}
+    assert c.get('/api/location/status',headers=h['worker1']).status_code==403
+    calls=setup_routes(c,app,h)
+    assert c.get('/api/location/status',headers=h['elder1']).json()=={'configured':True}
+    body={'longitude':127,'latitude':37.5,'consent':True,'label':'부산광역시 테스트로 10'}
+    assert c.post('/api/location',headers=h['elder1'],json=body).status_code==200
+    assert c.get('/api/location',headers=h['elder1']).json()['label']==body['label']
+    with app.state.factory() as db:
+        loc=db.get(RouteLocation,'elder1')
+        assert body['label'] not in loc.encrypted_point
+        point,_=app.state.routing.point(db,'elder1')
+        assert point==[127,37.5]
+        # Existing encrypted two-coordinate rows remain readable without migration.
+        loc.encrypted_point=app.state.routing.cipher.encrypt(b'[127,37.5]').decode();db.commit()
+    assert c.get('/api/location',headers=h['elder1']).json()['label']==''
+    app.state.routing.settings.naver_maps_key=SecretStr('')
+    assert c.get('/api/location/status',headers=h['elder1']).json()=={'configured':False}
+
+
+@pytest.mark.parametrize('data',[
+    {'status':'SYSTEM_ERROR','addresses':[]},
+    {'addresses':[{'roadAddress':'테스트로','x':'NaN','y':'37'}]},
+    {'addresses':[{'roadAddress':'테스트로','x':'999','y':'37'}]},
+])
+def test_invalid_geocode_is_not_a_selectable_address(api,data):
+    c,app=api;h=prepare(c);setup_routes(c,app,h)
+    app.state.routing.transport=httpx.MockTransport(lambda r:httpx.Response(200,json=data))
+    assert c.post('/api/location/search',headers=h['elder1'],json={'query':'테스트로 10','consent':True}).status_code==409

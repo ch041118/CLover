@@ -13,6 +13,7 @@ class Point(StrictModel):
     longitude:float=Field(ge=-180,le=180,allow_inf_nan=False)
     latitude:float=Field(ge=-90,le=90,allow_inf_nan=False)
     consent:bool=False
+    label:str=Field(default='',max_length=300)
     departure:str=Field(default='08:00',pattern=r'^(?:[01][0-9]|2[0-3]):[0-5][0-9]$')
 
 class Address(StrictModel):
@@ -38,7 +39,7 @@ class Routing:
     def point(self,session,uid):
         loc=session.get(RouteLocation,uid)
         if not loc or not loc.consent:raise HTTPException(409,'연결 당사자와 인접 방문 이용자의 위치·지도 전송 동의가 필요합니다.')
-        return json.loads(self.cipher.decrypt(loc.encrypted_point.encode())),loc.departure
+        return json.loads(self.cipher.decrypt(loc.encrypted_point.encode()))[:2],loc.departure
     def minutes(self,a,b,ctx):
         if a==b:return self.settings.travel_buffer_minutes
         key=(tuple(a),tuple(b))
@@ -75,12 +76,18 @@ class Routing:
 
 
 def register_locations(app,db,role,audit,cipher):
+    @app.get('/api/location/status')
+    def location_status(user=Depends(role('elder','caregiver'))):
+        settings=app.state.routing.settings
+        configured=bool(settings.routing_enabled and settings.naver_maps_key_id.get_secret_value() and settings.naver_maps_key.get_secret_value())
+        return {'configured':configured}
+
     @app.get('/api/location')
     def get_location(user=Depends(role('elder','caregiver')),session=Depends(db)):
         loc=session.get(RouteLocation,user.id)
         if not loc:return None
         point=json.loads(cipher.decrypt(loc.encrypted_point.encode()))
-        return {'longitude':point[0],'latitude':point[1],'consent':loc.consent,'departure':loc.departure}
+        return {'longitude':point[0],'latitude':point[1],'consent':loc.consent,'departure':loc.departure,'label':point[2] if len(point)>2 else ''}
     @app.post('/api/location')
     def save(body:Point,user=Depends(role('elder','caregiver')),session=Depends(db)):
         from .coordination import lock_users
@@ -89,14 +96,20 @@ def register_locations(app,db,role,audit,cipher):
             old=json.loads(cipher.decrypt(loc.encrypted_point.encode()))
             q=select(Booking.id).join(Availability).where(Booking.status.in_(('pending','offered','accepted','in_progress','completed','attention')),Availability.day>=str(datetime.now(KST).date()))
             q=q.where(Booking.elder_id==user.id) if user.role=='elder' else q.where(Availability.caregiver_id==user.id)
-            if (old!=point or loc.departure!=body.departure) and session.scalar(q):raise HTTPException(409,'진행할 일정이 있어 위치·출발 시간을 변경할 수 없습니다. 담당자에게 일정 재조율을 요청하세요.')
+            if (old[:2]!=point or loc.departure!=body.departure) and session.scalar(q):raise HTTPException(409,'진행할 일정이 있어 위치·출발 시간을 변경할 수 없습니다. 담당자에게 일정 재조율을 요청하세요.')
         else:loc=RouteLocation(owner_id=user.id);session.add(loc)
-        loc.encrypted_point=cipher.encrypt(json.dumps(point).encode()).decode();loc.consent=body.consent;loc.departure=body.departure
+        loc.encrypted_point=cipher.encrypt(json.dumps(point+[body.label.strip()],ensure_ascii=False).encode()).decode();loc.consent=body.consent;loc.departure=body.departure
         audit(session,user,'location_save',user.id);session.commit();return {'status':'saved'}
     @app.post('/api/location/search')
     def search(body:Address,user=Depends(role('elder','caregiver')),session=Depends(db)):
         if not body.consent:raise HTTPException(422,'주소를 네이버 지도에 전송하는 데 동의해 주세요.')
         data=app.state.routing.get('/map-geocode/v2/geocode',{'query':body.query},app.state.routing.context())
-        try:rows=[{'label':x.get('roadAddress') or x['jibunAddress'],'longitude':float(x['x']),'latitude':float(x['y'])} for x in data['addresses'][:5]]
+        try:
+            if data.get('status','OK')!='OK':raise ValueError()
+            rows=[]
+            for x in data['addresses'][:5]:
+                point=Point(longitude=float(x['x']),latitude=float(x['y']),label=x.get('roadAddress') or x['jibunAddress'])
+                if not point.label.strip():raise ValueError()
+                rows.append({'label':point.label,'longitude':point.longitude,'latitude':point.latitude})
         except (KeyError,TypeError,ValueError):raise HTTPException(409,'주소 검색 응답을 확인할 수 없습니다.')
         audit(session,user,'location_search','naver');session.commit();return rows

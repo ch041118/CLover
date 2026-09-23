@@ -75,3 +75,9 @@ test('logout while response body is being read discards user data', async () => 
   api.close(); finish({ id: 'private' });
   await assert.rejects(pending, ApiError);
 });
+
+test('location failures explain search configuration and schedule restrictions without exposing server text',async()=>{
+  const api=new ApiClient('https://example.com',()=>{},async()=>new Response(JSON.stringify({detail:'private server data'}),{status:409}));
+  await assert.rejects(api.request('/api/location/search',{query:'테스트로',consent:true}), /주소 검색 서비스/);
+  await assert.rejects(api.request('/api/location',{}), /일정/);
+});
