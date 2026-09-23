@@ -1,3 +1,4 @@
+import {stopAndCleanRecorder} from '../recorderCleanup';
 import React,{useEffect,useRef,useState} from 'react';
 import {AppState,Text} from 'react-native';
 import {AudioModule,RecordingPresets,setAudioModeAsync,useAudioRecorder} from 'expo-audio';
@@ -12,7 +13,7 @@ export function VoiceCheckin({api,onHelp}:{api:ApiClient;onHelp:()=>void}){
  const alive=useRef(true),epoch=useRef(0),locked=useRef(false),blockedUntil=useRef(0),token=useRef('');
  const timer=useRef<ReturnType<typeof setTimeout>|null>(null),wake=useRef<(()=>void)|null>(null);
  const clean=(uri:string|null)=>{if(uri)try{const f=new File(uri);if(f.exists)f.delete();}catch{}};
- const cancel=()=>{epoch.current++;const pending=token.current;if(pending&&!api.closed)void api.request('/api/checkin/abort',{token:pending}).catch(()=>{});if(timer.current)clearTimeout(timer.current);wake.current?.();wake.current=null;void stopSpeaking();void recorder.stop().catch(()=>{}).finally(()=>clean(recorder.uri));};
+ const cancel=()=>{epoch.current++;const pending=token.current;if(pending&&!api.closed)void api.request('/api/checkin/abort',{token:pending}).catch(()=>{});if(timer.current)clearTimeout(timer.current);wake.current?.();wake.current=null;void stopSpeaking();void stopAndCleanRecorder(recorder,clean);};
  async function cycle(){
   if(locked.current||!alive.current||api.closed||AppState.currentState!=='active'||Date.now()<blockedUntil.current)return;
   locked.current=true;const id=epoch.current;const current=()=>alive.current&&epoch.current===id&&!api.closed&&AppState.currentState==='active';
@@ -25,10 +26,11 @@ export function VoiceCheckin({api,onHelp}:{api:ApiClient;onHelp:()=>void}){
    if(!await say(attempt.question)){if(current())throw new Error('음성 안내를 재생하지 못했습니다. 휴대폰 소리 설정을 확인해 주세요.');return;}
    if(!current())return;
    await setAudioModeAsync({allowsRecording:true,playsInSilentMode:true,allowsBackgroundRecording:false,shouldRouteThroughEarpiece:false});
-   await recorder.prepareToRecordAsync();if(!current()){await recorder.stop().catch(()=>{});clean(recorder.uri);return;}
+   if(!current())return;
+      await recorder.prepareToRecordAsync();if(!current()){await stopAndCleanRecorder(recorder,clean);return;}
    recorder.record();setMessage('듣고 있어요. “네”, “잘 지내요” 또는 “도와주세요”라고 말씀해 주세요.');
    await new Promise<void>(resolve=>{wake.current=resolve;timer.current=setTimeout(resolve,8000);});wake.current=null;timer.current=null;
-   await recorder.stop();const uri=recorder.uri;if(!current()){clean(uri);return;}
+   if(!current())return;await recorder.stop();if(!current())return;const uri=recorder.uri;
    if(!uri)throw new Error('녹음을 확인할 수 없습니다.');
    let audio_base64:string;try{const f=new File(uri);if(f.size>2_000_000)throw new Error('녹음이 너무 깁니다.');audio_base64=await f.base64();}finally{clean(uri);}
    if(!current())return;setMessage('말씀을 확인하고 있습니다…');

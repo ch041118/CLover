@@ -1,3 +1,4 @@
+import {stopAndCleanRecorder} from '../recorderCleanup';
 import React, { useEffect, useRef, useState } from 'react';
 import { AppState, Text } from 'react-native';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
@@ -17,7 +18,7 @@ export function VoiceRequest({ api, onDone, onBusy }: { api: ApiClient; onDone: 
   useEffect(()=>{
     alive.current=true;
     const cancel=()=>{epoch.current++;void stopSpeaking();if(timer.current)clearTimeout(timer.current);timer.current=null;
-      void recorder.stop().catch(()=>{}).finally(()=>{cleanFile(recorder.uri);locked.current=false;if(alive.current){setBusy(false);setRecording(false);onBusy(false);}});
+      void stopAndCleanRecorder(recorder,cleanFile).then(()=>{locked.current=false;if(alive.current){setBusy(false);setRecording(false);onBusy(false);}});
     };
     const listener=AppState.addEventListener('change',state=>{if(state!=='active'){cancel();setMessage('녹음이 중단되었습니다. 다시 시작해 주세요.');}});
     return()=>{alive.current=false;listener.remove();cancel();};
@@ -30,18 +31,19 @@ export function VoiceRequest({ api, onDone, onBusy }: { api: ApiClient; onDone: 
       if(!permission.granted)throw new Error('휴대폰 설정에서 마이크 사용을 허용해 주세요. 글로도 접수할 수 있습니다.');
       if(!current())return;
       await setAudioModeAsync({allowsRecording:true,playsInSilentMode:true,allowsBackgroundRecording:false});
-      await recorder.prepareToRecordAsync();if(!current()){await recorder.stop().catch(()=>{});cleanFile(recorder.uri);return;}
+      if(!current())return;
+      await recorder.prepareToRecordAsync();if(!current()){await stopAndCleanRecorder(recorder,cleanFile);return;}
       recorder.record();setRecording(true);
       const seconds=confirm?7:25;
       setMessage(confirm?'지금 “접수해 주세요” 또는 “취소해 주세요”라고 말씀해 주세요. 7초 후 확인합니다.':'필요한 도움을 편하게 말씀해 주세요. 25초 후 자동으로 녹음을 마칩니다.');
       timer.current=setTimeout(()=>{void finish(confirm,id);},seconds*1000);
-    }catch(error){await recorder.stop().catch(()=>{});cleanFile(recorder.uri);if(current()){setMessage(error instanceof Error?error.message:'녹음을 시작하지 못했습니다.');setBusy(false);setRecording(false);onBusy(false);locked.current=false;}}
+    }catch(error){await stopAndCleanRecorder(recorder,cleanFile);if(current()){setMessage(error instanceof Error?error.message:'녹음을 시작하지 못했습니다.');setBusy(false);setRecording(false);onBusy(false);locked.current=false;}}
   }
   async function finish(confirm:boolean,id:number){
     timer.current=null;let uri:string|null=null;
     const current=()=>alive.current&&epoch.current===id&&!api.closed;
     try{
-      await recorder.stop();uri=recorder.uri;if(!current())return;setRecording(false);setMessage('기관 PC에서 음성을 글로 바꾸고 있습니다…');
+      if(!current())return;await recorder.stop();if(!current())return;uri=recorder.uri;setRecording(false);setMessage('기관 PC에서 음성을 글로 바꾸고 있습니다…');
       if(!uri)throw new Error('녹음 파일을 확인할 수 없습니다. 다시 녹음해 주세요.');
       const file=new File(uri);if(file.size>2_000_000)throw new Error('녹음이 너무 깁니다. 짧게 다시 말씀해 주세요.');
       const audio_base64=await file.base64();cleanFile(uri);uri=null;
