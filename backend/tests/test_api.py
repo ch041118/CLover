@@ -8,7 +8,7 @@ from app.models import User, Care, Attendance, Audit
 
 @pytest.fixture
 def api(tmp_path):
-    settings = Settings(_env_file=None, jwt_secret='x'*48, data_key=Fernet.generate_key().decode(), database_url=f'sqlite:///{tmp_path}/test.db', maps_usage_path=str(tmp_path/'maps.sqlite3'))
+    settings = Settings(_env_file=None, flow_worker_enabled=False, jwt_secret='x'*48, data_key=Fernet.generate_key().decode(), database_url=f'sqlite:///{tmp_path}/test.db', maps_usage_path=str(tmp_path/'maps.sqlite3'))
     app = create_app(settings)
     with TestClient(app) as client:
         with app.state.factory() as db:

@@ -1,5 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { AppState, KeyboardAvoidingView, Platform, Pressable, ScrollView, StatusBar, Text, View } from 'react-native';
+import {ElderMic} from './src/components/ElderMic';
+import {PairDevice,Enrollment,AutoSettings,FlowInbox,FlowAlerts} from './src/components/FlowStaff';
+import {restoreDevice} from './src/device';
 import { ApiClient, resolveBaseUrl } from './src/api';
 import { Care, Category, Role, User, Urgency, categories, roles, urgencies } from './src/types';
 
@@ -15,12 +18,12 @@ import {VoiceCheckin} from './src/components/VoiceCheckin';
 import { VoiceRequest } from './src/components/VoiceRequest';
 
 function Auth({ api, onLogin }: { api: ApiClient; onLogin: (user: User) => void }) {
-  const [signup, setSignup] = useState(false), [id, setId] = useState(''), [password, setPassword] = useState(''), [role, setRole] = useState<'elder' | 'social_worker' | 'caregiver'>('elder');
+  const [signup, setSignup] = useState(false), [id, setId] = useState(''), [password, setPassword] = useState(''), [role, setRole] = useState<'social_worker' | 'caregiver'>('caregiver');
   const task = useTask();
   return <Card><Text style={s.heading}>{signup ? '함께 돌봄을 시작해요' : '다시 만나 반가워요'}</Text><Text style={s.body}>가입 후 기관 관리자의 승인이 필요합니다.</Text>
     <Field label="아이디 (영문·숫자·_·-)" value={id} onChange={setId} maxLength={40} />
     <Field label="비밀번호 (가입 시 12자 이상)" value={password} onChange={setPassword} password />
-    {signup && <Chips options={{ elder: '어르신', social_worker: '사회복지사', caregiver: '요양보호사' }} value={role} select={setRole} />}
+    {signup && <Chips options={{ social_worker: '사회복지사', caregiver: '요양보호사' }} value={role} select={setRole} />}
     <Button disabled={task.busy || !id || !password} title={task.busy ? '처리 중…' : signup ? '가입 신청' : '로그인'} onPress={() => task.run(async () => {
       if (signup) { await api.request('/api/signup', { id, password, role }); setSignup(false); setPassword(''); task.setMessage('가입 신청을 보냈습니다. 관리자 승인 후 로그인해 주세요.'); }
       else { const result = await api.request<{ access_token: string }>('/api/login', { id, password }); api.token = result.access_token;
@@ -91,33 +94,37 @@ function Drafts({ api }: { api: ApiClient }) {
 function Session({ baseUrl }: { baseUrl: string }) {
   const [user, setUser] = useState<User | null>(null), [tab, setTab] = useState('home'), [sessionId, setSessionId] = useState(0);
   const api = React.useMemo(() => new ApiClient(baseUrl, () => { setUser(null); setSessionId(x => x + 1); }), [baseUrl, sessionId]);
+  const [toggleMode,setToggleMode]=useState(false),[restoring,setRestoring]=useState(true);const staffMode=useRef(false);
+  useEffect(()=>{let live=true;setRestoring(true);if(staffMode.current){setRestoring(false);return;}void restoreDevice(api).then(r=>{if(live&&r){setUser(r.user);setToggleMode(r.toggleMode);}}).catch(()=>{}).finally(()=>{if(live)setRestoring(false);});return()=>{live=false;};},[api]);
+  useEffect(()=>{if(user?.role!=='elder')return;const timer=setInterval(()=>void restoreDevice(api).catch(()=>{}),10*60*1000);return()=>clearInterval(timer);},[api,user?.role]);
   useEffect(() => () => api.close(), [api]);
   const logout = () => { api.close(); setUser(null); setTab('home'); setSessionId(x => x + 1); };
-  const menu: Record<string, string> = !user ? {} : user.role === 'elder' ? { home: '홈', request: '도움 요청', match: '돌봄 연결', list: '내 요청', settings: '설정' } : user.role === 'social_worker' ? { desk: 'AI 업무함', team: '담당 팀', history: '처리 이력', stats: '현황', queue: '새 요청', list: '요청 검토', schedules: '일정 관리', repeats: '반복 요청', draft: '안내문', settings: '설정' } : user.role === 'admin' ? { approvals: '가입 승인', team: '담당 연결', history: '처리 이력', draft: '안내문', settings: '설정' } : { home: '돌봄 수행', team: '담당 사회복지사', availability: '근무 가능 시간', settings: '설정' };
-  return <><View style={s.brand}><Text style={s.logo}>CLover</Text><Text style={s.body}>생활 속 도움을 연결해요</Text></View>
-    {!user ? <Auth key={sessionId} api={api} onLogin={u => { setUser(u); setTab(u.role === 'social_worker' ? 'desk' : u.role === 'admin' ? 'approvals' : 'home'); }} /> : <>
+  const menu: Record<string, string> = !user ? {} : user.role === 'elder' ? { home: '홈', request: '도움 요청', match: '돌봄 연결', list: '내 요청', settings: '설정' } : user.role === 'social_worker' ? { flow: '개입 필요', desk: '기존 AI 업무함', team: '담당 팀', history: '처리 이력', stats: '현황', queue: '새 요청', list: '요청 검토', schedules: '일정 관리', repeats: '반복 요청', draft: '안내문', settings: '설정' } : user.role === 'admin' ? { flow: '자동 처리 내역', approvals: '가입 승인', team: '담당 연결', history: '처리 이력', draft: '안내문', settings: '설정' } : { home: '돌봄 수행', enrollment: '어르신 등록', team: '담당 사회복지사', availability: '근무 가능 시간', settings: '설정' };
+  if(restoring)return <View style={s.page}><Text style={s.body}>기기를 연결하고 있어요…</Text></View>;
+  if(user?.role==='elder')return <ElderMic api={api} toggleMode={toggleMode} onStaff={()=>{staffMode.current=true;logout();}}/>;
+  return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.page}><View style={s.brand}><Text style={s.logo}>CLover</Text><Text style={s.body}>생활 속 도움을 연결해요</Text></View>
+    {!user ? <><PairDevice api={api} onLogin={(u,t)=>{staffMode.current=false;setToggleMode(t);setUser(u);}}/><Auth key={sessionId} api={api} onLogin={u => { setUser(u); setTab(u.role === 'social_worker' ? 'flow' : u.role === 'admin' ? 'approvals' : 'home'); }} /></> : <>
       <View style={s.account}><Text style={s.label}>{user.id} · {roles[user.role]}</Text><Pressable accessibilityRole="button" onPress={logout} style={{ padding: 12 }}><Text style={s.link}>로그아웃</Text></Pressable></View>
-      {user.role === 'elder' && <ConsentGate api={api} />}
       <Chips options={menu} value={tab} select={setTab} />
       <View key={`${user.id}:${tab}`} style={{ gap: 14 }}>
-        {user.role === 'elder' && tab === 'home' && <Home api={api} navigate={setTab} />}
-        {user.role === 'elder' && tab === 'request' && <NewRequest api={api} onDone={() => setTab('list')} />}
-        {(user.role === 'elder' || user.role === 'social_worker') && tab === 'list' && <Requests api={api} worker={user.role === 'social_worker'} />}
+        {user.role === 'social_worker' && tab === 'list' && <Requests api={api} worker={user.role === 'social_worker'} />}
         {user.role === 'social_worker' && tab === 'queue' && <Requests api={api} worker unassigned />}
         {user.role === 'admin' && tab === 'approvals' && <Approvals api={api} />}
         {(user.role === 'admin' || user.role === 'social_worker') && tab === 'draft' && <Drafts api={api} />}
+        {['social_worker','admin'].includes(user.role) && tab === 'flow' && <FlowInbox api={api} readOnly={user.role==='admin'}/>}
+        {user.role === 'caregiver' && tab === 'enrollment' && <Enrollment api={api}/>}
         {user.role === 'social_worker' && tab === 'desk' && <WorkerDesk api={api} navigate={setTab} />}
         {user.role === 'social_worker' && tab === 'stats' && <WorkerStatistics api={api} />}
         {user.role === 'social_worker' && tab === 'schedules' && <WorkerSchedules api={api} userId={user.id} />}
         {user.role === 'social_worker' && tab === 'repeats' && <RepeatInbox api={api} userId={user.id} />}
-        {user.role === 'caregiver' && tab === 'home' && <CaregiverVisits api={api} />}
-        {tab === 'settings' && <><SettingsScreen api={api}/>{user.role==='admin'&&<MapUsagePanel api={api}/>}{['elder','caregiver'].includes(user.role)&&<LocationSettings api={api} caregiver={user.role==='caregiver'}/>}</>}
+        {user.role === 'caregiver' && tab === 'home' && <><FlowAlerts api={api}/><CaregiverVisits api={api} /></>}
+        {tab === 'settings' && <><SettingsScreen api={api}/>{user.role==='caregiver'&&<AutoSettings api={api}/>}<FlowAlerts api={api}/>{user.role==='admin'&&<MapUsagePanel api={api}/>}{['elder','caregiver'].includes(user.role)&&<LocationSettings api={api} caregiver={user.role==='caregiver'}/>}</>}
         {tab==='team'&&['admin','social_worker','caregiver'].includes(user.role)&&<Teams api={api} admin={user.role==='admin'}/>}
         {tab==='history'&&['admin','social_worker'].includes(user.role)&&<OperationHistory api={api}/>} 
-        {((user.role === 'elder' && tab === 'match') || (user.role === 'caregiver' && tab === 'availability')) && <MatchingScreen api={api} caregiver={user.role === 'caregiver'} />}
+        {(user.role === 'caregiver' && tab === 'availability') && <MatchingScreen api={api} caregiver={user.role === 'caregiver'} />}
       </View></>}
     <Text style={s.emergency}>즉시 위험한 상황이면 119에 연락하세요. 이 앱은 자동 신고하지 않습니다.</Text>
-  </>;
+  </ScrollView>;
 }
 export default function App() {
   const [active, setActive] = useState(AppState.currentState === 'active');
@@ -125,7 +132,7 @@ export default function App() {
   let url = '', error = '';
   try { url = resolveBaseUrl(process.env.EXPO_PUBLIC_API_URL, __DEV__, process.env.EXPO_PUBLIC_ALLOW_INSECURE_DEV === 'true'); }
   catch (e) { error = e instanceof Error ? e.message : '서버 설정을 확인하세요.'; }
-  return <View style={s.root}><StatusBar barStyle="dark-content" backgroundColor={colors.bg} /><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={s.page}>
+  return <View style={s.root}><StatusBar barStyle="dark-content" backgroundColor={colors.bg} /><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><View style={{flex:1}}>
     {error ? <Card><Text style={s.heading}>기관 서버 연결 설정</Text><Text style={s.body}>{error}</Text><Text style={s.caption}>설정 방법: 저장소 docs/MOBILE.md</Text></Card> : <Session baseUrl={url} />}
-  </ScrollView></KeyboardAvoidingView>{!active && <View style={s.cover}><Text style={s.logo}>CLover</Text><Text style={s.body}>개인정보 보호를 위해 화면을 가렸습니다.</Text></View>}</View>;
+  </View></KeyboardAvoidingView>{!active && <View style={s.cover}><Text style={s.logo}>CLover</Text><Text style={s.body}>개인정보 보호를 위해 화면을 가렸습니다.</Text></View>}</View>;
 }

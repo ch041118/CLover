@@ -5,7 +5,7 @@ from typing import Literal
 from fastapi import Depends, HTTPException, Query
 from pydantic import Field, field_validator
 from sqlalchemy import select, update, func, or_
-from .models import User, Care, Availability, Booking, Coordination, VisitRecord, RepeatCase, ServiceRegion, ScheduleProposal, CaregiverTeam
+from .models import User, Care, Availability, Booking, Coordination, VisitRecord, RepeatCase, ServiceRegion, ScheduleProposal, CaregiverTeam, VoiceJob
 from .schemas import StrictModel, Category
 from .matching import KST, slot_future
 from .privacy import SECRET, normalize
@@ -267,7 +267,7 @@ def register_coordination(app,db,current,role,audit,cipher,routing):
             b.status=p.status='accepted'
         else:
             if not body.reason: raise HTTPException(422,'조율을 위해 거절 사유를 남겨 주세요.')
-            b.status=p.status='declined';slot.state='closed'
+            b.status=p.status='declined';slot.state='open' if p.stage=='automatic' and slot_future(slot) else 'closed'
             p.encrypted_reason=cipher.encrypt(body.reason.encode()).decode()
         audit(session,user,'proposal_'+body.action,p.id);session.commit()
         return {'status':b.status}
@@ -377,3 +377,6 @@ def register_coordination(app,db,current,role,audit,cipher,routing):
         case.auto_route=body.auto_route if body.decision!='close' else False
         audit(session,user,'repeat_'+body.decision,case.id);session.commit()
         return {'state':case.state,'auto_route':case.auto_route}
+
+    app.state.flow_assign = assign
+    app.state.flow_reschedule = reschedule

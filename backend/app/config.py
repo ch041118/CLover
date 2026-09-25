@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     maps_route_cache_seconds: int = Field(default=300,ge=0,le=1800)
     maps_daily_call_limit: int = Field(default=2000,ge=1,le=1000000)
     maps_usage_path: str = './maps-usage.sqlite3'
+    flow_worker_enabled: bool = True
+    flow_push_enabled: bool = False
     speech_enabled: bool = False
     speech_model_path: str = './models/whisper-tiny'
     cors_origins: list[str] = ['http://localhost:3000']

@@ -15,6 +15,9 @@ from sqlalchemy import create_engine, select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker, Session
 from .config import Settings
+from .flow_service import FlowService, aware, utc
+from .flow_api import register_flow
+from .models import DeviceLink
 from .models import Base, User, Care, Audit, Attendance, Preference
 from .schemas import Signup, Login, CareCreate, Review, GeneralDraft
 from .classifier import Classifier
@@ -30,7 +33,7 @@ from .speech import Speech, SpeechInput, SpeechUnavailable, SpeechInvalid, sugge
 passwords = PasswordHash.recommended()
 bearer = HTTPBearer(auto_error=False)
 
-def create_app(settings=None, classifier=None, general_ai=None, speech=None, routing=None):
+def create_app(settings=None, classifier=None, general_ai=None, speech=None, routing=None, intent_parser=None):
     settings = settings or Settings()
     engine = create_engine(settings.database_url, **({'connect_args': {'check_same_thread': False}} if settings.database_url.startswith('sqlite:') else {}))
     factory = sessionmaker(engine, expire_on_commit=False)
@@ -39,6 +42,7 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None, rou
     general_ai = general_ai or GeneralAI(settings)
     speech = speech or Speech(settings)
     routing = routing or Routing(settings,cipher)
+    flow = FlowService(settings,factory,cipher,speech,routing,intent_parser)
     dummy_hash = passwords.hash(uuid.uuid4().hex)
 
     @asynccontextmanager
@@ -46,12 +50,15 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None, rou
         # Development only; production schema creation is an explicit deployment command.
         if settings.app_env == 'development':
             Base.metadata.create_all(engine)
+        if settings.flow_worker_enabled: flow.start()
         yield
+        flow.close()
         engine.dispose()
 
     app = FastAPI(title='CLover 생활 돌봄', lifespan=lifespan,
                   docs_url='/docs' if settings.app_env == 'development' else None,
                   redoc_url=None, openapi_url='/openapi.json' if settings.app_env == 'development' else None)
+    app.state.flow = flow
     app.state.routing = routing
     app.state.factory = factory
     app.state.engine = engine
@@ -69,7 +76,7 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None, rou
     @app.middleware('http')
     async def security_headers(request: Request, call_next):
         # Deployment proxy must also enforce size and rate limits, including chunked requests.
-        limit = 2_900_000 if request.url.path in ('/api/speech/transcribe','/api/checkin/respond') else 32768
+        limit = 2_900_000 if request.url.path in ('/api/speech/transcribe','/api/checkin/respond','/api/flow/voice') else 32768
         if request.headers.get('content-length', '').isdigit() and int(request.headers['content-length']) > limit:
             return JSONResponse(status_code=413, content={'detail': '요청이 너무 큽니다.'})
         if request.method in ('POST', 'PUT', 'PATCH'):
@@ -98,6 +105,9 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None, rou
             user = session.get(User, claims['sub'])
             if user is None or user.status != 'approved':
                 raise ValueError()
+            if claims.get('device_id'):
+                device=session.get(DeviceLink,claims['device_id'])
+                if not device or device.elder_id!=user.id or device.revoked or aware(device.expires)<utc():raise ValueError()
             return user
         except (jwt.PyJWTError, ValueError, TypeError):
             raise HTTPException(401, '로그인이 필요합니다.')
@@ -302,4 +312,5 @@ def create_app(settings=None, classifier=None, general_ai=None, speech=None, rou
     register_desk(app, db, role, audit, cipher)
     register_matching(app, db, current, role, audit)
     register_coordination(app, db, current, role, audit, cipher, routing)
+    register_flow(app, db, current, role, audit, cipher, passwords, settings)
     return app

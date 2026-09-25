@@ -155,3 +155,73 @@ class CheckinDay(Base):
     state: Mapped[str] = mapped_column(String(20), default='waiting')
     token: Mapped[str | None] = mapped_column(String(36), nullable=True)
     next_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+# New workflow tables are additive; existing accounts and schedules remain valid.
+class ElderProfile(Base):
+    __tablename__ = 'elder_profiles'
+    elder_id: Mapped[str] = mapped_column(ForeignKey('users.id'), primary_key=True)
+    worker_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    registered_by: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    encrypted_details: Mapped[str] = mapped_column(Text)
+
+class DeviceLink(Base):
+    __tablename__ = 'device_links'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    elder_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    code_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    secret_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    expires: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+class AutoPolicy(Base):
+    __tablename__ = 'auto_policies'
+    caregiver_id: Mapped[str] = mapped_column(ForeignKey('users.id'), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    categories: Mapped[str] = mapped_column(Text, default='[]')
+
+class VoiceJob(Base):
+    __tablename__ = 'voice_jobs'
+    __table_args__ = (UniqueConstraint('elder_id','request_key'),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    elder_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    worker_id: Mapped[str | None] = mapped_column(ForeignKey('users.id'), nullable=True, index=True)
+    request_key: Mapped[str] = mapped_column(String(80))
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    encrypted_audio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_plan: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state: Mapped[str] = mapped_column(String(24), default='queued', index=True)
+    reason: Mapped[str] = mapped_column(String(60), default='')
+    care_id: Mapped[str | None] = mapped_column(ForeignKey('care_logs.id'), nullable=True)
+    booking_id: Mapped[str | None] = mapped_column(ForeignKey('bookings.id'), nullable=True)
+    attempts: Mapped[int] = mapped_column(default=0)
+    clarifications: Mapped[int] = mapped_column(default=0)
+    lease: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class FlowEvent(Base):
+    __tablename__ = 'flow_events'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey('voice_jobs.id'), index=True)
+    actor: Mapped[str] = mapped_column(String(40))
+    kind: Mapped[str] = mapped_column(String(40))
+    encrypted_note: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class FlowNotice(Base):
+    __tablename__ = 'flow_notices'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey('voice_jobs.id'), index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    read: Mapped[bool] = mapped_column(Boolean, default=False)
+    push_state: Mapped[str] = mapped_column(String(20), default='pending')
+    attempts: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class PushDevice(Base):
+    __tablename__ = 'push_devices'
+    owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), primary_key=True)
+    encrypted_token: Mapped[str] = mapped_column(Text)
